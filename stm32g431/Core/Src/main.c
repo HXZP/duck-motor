@@ -102,7 +102,7 @@ int main(void)
   I2C_Init();
   as5600Init();
   foc_root_init();
-  foc_set_target(0,30,0);
+  foc_set_target(0,10,0);//功率13.7W电流1.14A
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -112,7 +112,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 
+    //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 
     HAL_Delay(1);
   }
   /* USER CODE END 3 */
