@@ -12,14 +12,14 @@
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 extern ADC_HandleTypeDef hadc1;
+extern ADC_HandleTypeDef hadc2;
 
 static void GPIO_Init(void);
 
 uint16_t injected_data[2] = {0};
 
-//#define ADC_BUFFER_SIZE 2  // 两个通道：ch0, ch1
-//__ALIGN_BEGIN uint16_t adc_buffer[ADC_BUFFER_SIZE] __ALIGN_END;
-
+/*当高电平大于一半的时候在高电平采样，低于一半的时候在低电平采样*/
+uint16_t the_max_ccr = 0;
 void foc_output(uint16_t a, uint16_t b, uint16_t c)
 {
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
@@ -29,6 +29,18 @@ void foc_output(uint16_t a, uint16_t b, uint16_t c)
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, a);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, b);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
+    
+    the_max_ccr = a;
+    if(the_max_ccr < b)
+    {
+        the_max_ccr = b;
+    }
+    if(the_max_ccr < c)
+    {
+        the_max_ccr = c;
+    }
+    
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, the_max_ccr);
 }
 
 foc_t foc;
@@ -104,32 +116,26 @@ void foc_output_enable(uint8_t enable)
 
 
 //参考电压3.3，采样偏置1.5，采样电阻10mo，放大倍数50，4095，(adc/4095*3.3 - 1.5)/50/0.01*1000 = mA
-int16_t current_data[3] = {0};
-int16_t current_data_last[3] = {0};
-int16_t current_lpf[3] = {0};
+uint8_t adc_data_get_flag = 0;
 void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if(hadc->Instance == ADC1)
     {
-//        current_data_last[0] = current_data[0];
-//        current_data_last[1] = current_data[1];
-
         // 获取所有注入通道的数据
         injected_data[0] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
-        
-//        if(foc.adc_offset.init_flag)
-//        {
-//            current_data[0] = -((injected_data[0] - foc.adc_offset.ch1)*440/273);
-//            current_data[1] = -((injected_data[1] - foc.adc_offset.ch2)*440/273);
-//            current_data[2] = -current_data[0] - current_data[1];
-//        }
-
-        
-//        // 一阶低通滤波
-//        current_lpf[0] = (current_data[0] + current_data_last[0])/2;
-//        current_lpf[1] = (current_data[1] + current_data_last[1])/2;
-
-//        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+        adc_data_get_flag++;
+    }
+    
+    else if(hadc->Instance == ADC2)
+    {
+        // 获取所有注入通道的数据
+        injected_data[1] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
+        adc_data_get_flag++;
+    }
+    
+    if(adc_data_get_flag == 2)
+    {
+        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
     }
 }
 
@@ -141,9 +147,10 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
         // 检查并处理通道4中断
         if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
         {
-            
+            adc_data_get_flag = 0;
             HAL_ADCEx_InjectedStart_IT(&hadc1);
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+            HAL_ADCEx_InjectedStart_IT(&hadc2);
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,0);
         }
     }
 }

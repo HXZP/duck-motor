@@ -120,7 +120,6 @@
         <SetRegEntry>
           <Number>0</Number>
           <Key>DLGUARM</Key>
-          <Name>x</Name>
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
@@ -159,6 +158,11 @@
           <count>0</count>
           <WinNumber>1</WinNumber>
           <ItemText>foc,0x0A</ItemText>
+        </Ww>
+        <Ww>
+          <count>1</count>
+          <WinNumber>1</WinNumber>
+          <ItemText>injected_data,0x0A</ItemText>
         </Ww>
       </WatchWindow1>
       <Tracepoint>
@@ -594,8 +598,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\..\user\drivers\as5600.c</PathWithFileName>
-      <FilenameWithoutPath>as5600.c</FilenameWithoutPath>
+      <PathWithFileName>..\..\user\drivers\foc_init.c</PathWithFileName>
+      <FilenameWithoutPath>foc_init.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>
@@ -606,8 +610,8 @@
       <tvExp>0</tvExp>
       <tvExpOptDlg>0</tvExpOptDlg>
       <bDave2>0</bDave2>
-      <PathWithFileName>..\..\user\drivers\foc_init.c</PathWithFileName>
-      <FilenameWithoutPath>foc_init.c</FilenameWithoutPath>
+      <PathWithFileName>..\..\user\drivers\as5600.c</PathWithFileName>
+      <FilenameWithoutPath>as5600.c</FilenameWithoutPath>
       <RteFlg>0</RteFlg>
       <bShared>0</bShared>
     </File>

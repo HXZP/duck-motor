@@ -98,6 +98,7 @@ int main(void)
   MX_ADC2_Init();
   MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
+  HAL_Delay(500);
   log_init();
   I2C_Init();
   as5600Init();
@@ -113,7 +114,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
     //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 
-    HAL_Delay(1);
+    //HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }
