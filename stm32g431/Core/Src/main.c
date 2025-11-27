@@ -29,6 +29,8 @@
 #include "soft_iic.h"
 #include "as5600.h"
 #include "foc_init.h"
+#include "foc/foc_core.h"
+#include "foc/foc_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,7 +62,10 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+float q_set = 10;
 
+foc_pid_t speed_pid = {0};
+extern foc_t foc;
 /* USER CODE END 0 */
 
 /**
@@ -87,7 +92,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+    
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -103,7 +108,7 @@ int main(void)
   I2C_Init();
   as5600Init();
   foc_root_init();
-  foc_set_target(0,10,0);//功率13.7W电流1.14A
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,10 +116,15 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
+    
     /* USER CODE BEGIN 3 */
+//    speed_pid.percent =  foc.angle.sensor_angle; 
+//    q_set = foc_pi_ctrl(&speed_pid);  
+      
+    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
     //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 
-    //HAL_Delay(1);
+    foc_get_angle();
+    HAL_Delay(1);
   }
   /* USER CODE END 3 */
 }

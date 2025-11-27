@@ -210,9 +210,9 @@ void foc_init(foc_t *foc, const foc_cfg_t *cfg)
 }
 
 /*angle:0~1*/
-float foc_sensor_updata(foc_t *foc)
+float foc_sensor_updata(foc_t *foc,float angle)
 {  
-    float angle = foc->cfg->get_angle_rad();
+    //float angle = foc->cfg->get_angle_rad();
     
     foc->angle.sensor_angle = angle;
     foc->angle.mech_angle = foc_angle_cycle(foc->angle.sensor_angle - foc->angle.zero_angle);
@@ -240,6 +240,17 @@ void foc_target_updata(foc_t *foc, foc_park_t target)
 
 }
 
+void foc_current_updata(foc_t *foc, float a, float b, float c)
+{
+    if(foc->state != Foc_Working)
+    {
+        return;
+    }
+    
+    foc->phase_current.a = a;
+    foc->phase_current.b = b;
+    foc->phase_current.c = c;
+}
 
 void foc_control(foc_t *foc)
 {
@@ -259,27 +270,30 @@ void foc_control(foc_t *foc)
 //    foc_get_vector_strength(&foc->output_vector, foc->info.vector_voltage);
     foc_get_pwm_duty(&foc->pwm_duty, &foc->output_vector);
     
-    foc->cfg->output(foc->pwm_duty.a,foc->pwm_duty.b,foc->pwm_duty.c);
+    foc->cfg->output(foc->cfg->pwm_period,foc->pwm_duty.a,foc->pwm_duty.b,foc->pwm_duty.c);
 }
 
 void foc_zero_reset(foc_t *foc)
 {
     if(foc->state == Foc_Zero_Angle_Init)
     {
-        foc->cfg->output(foc->cfg->pwm_period*90/100,0,0);
-        foc->cfg->delay(300);
+        foc->cfg->output(foc->cfg->pwm_period,foc->cfg->pwm_period*0.8f,0,0);
+        foc->cfg->delay(200);
         foc->angle.sensor_angle = foc->cfg->get_angle_rad();
         foc->angle.zero_angle = foc->angle.sensor_angle;
-        foc->cfg->output(0,0,0);
+        foc->cfg->output(foc->cfg->pwm_period,0,0,0);
         foc->state = Foc_Working;
     }
 }
 
 void foc_adc_offset_get(foc_t *foc, uint16_t* ch1, uint16_t*ch2)
 {
-    uint16_t *adc_data_ch1 = malloc(sizeof(uint16_t)*250);
-    uint16_t *adc_data_ch2 = malloc(sizeof(uint16_t)*250);
+//    uint16_t *adc_data_ch1 = malloc(sizeof(uint16_t)*250);
+//    uint16_t *adc_data_ch2 = malloc(sizeof(uint16_t)*250);
 
+    uint16_t adc_data_ch1[250] = {0};
+    uint16_t adc_data_ch2[250] = {0};
+    
     for(foc->adc_offset.cnt = 0; foc->adc_offset.cnt < 250; foc->adc_offset.cnt++)
     {
         adc_data_ch1[foc->adc_offset.cnt] = *ch1;
@@ -295,9 +309,6 @@ void foc_adc_offset_get(foc_t *foc, uint16_t* ch1, uint16_t*ch2)
 
     foc->adc_offset.ch1 = foc->adc_offset.ch1_sum / 250;
     foc->adc_offset.ch2 = foc->adc_offset.ch2_sum / 250;
-
-    free(adc_data_ch1);
-    free(adc_data_ch2);
 
     foc->adc_offset.init_flag = 1;
 }

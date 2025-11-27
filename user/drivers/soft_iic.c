@@ -4,7 +4,7 @@
 // I2C延时函数（基于68MHz系统时钟）
 static void I2C_Delay(void)
 {
-    volatile uint32_t delay = 1;  // 调整这个值来改变时序
+    volatile uint32_t delay = 100;  // 调整这个值来改变时序
     while(delay--);
 }
 

@@ -18,28 +18,82 @@ static void GPIO_Init(void);
 
 uint16_t injected_data[2] = {0};
 
-/*当高电平大于一半的时候在高电平采样，低于一半的时候在低电平采样*/
-uint16_t the_max_ccr = 0;
-void foc_output(uint16_t a, uint16_t b, uint16_t c)
+#define CURRENT_WINDOW 350*2
+#define CURRENT_DET_DELAY 600+900//实际延时+波动，可能是因为抖动导致了尖峰850
+
+// 4250/3 = 1416 > CURRENT_WINDOW+CURRENT_DET_DELAY=
+uint16_t current_window_get(uint16_t pwm_period, uint16_t a, uint16_t b, uint16_t c)
 {
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+    // 使用排序网络对3个元素进行排序（无分支，最高效）
+    uint16_t min_val, mid_val, max_val;
+    
+    // 第一步：比较a和b
+    min_val = (a < b) ? a : b;
+    max_val = (a > b) ? a : b;
+    
+    // 第二步：比较c和max_val，确定最大值
+    max_val = (c > max_val) ? c : max_val;
+    
+    // 第三步：比较c和min_val，确定最小值  
+    min_val = (c < min_val) ? c : min_val;
+    
+    // 第四步：中值通过排除法得到
+    mid_val = a + b + c - min_val - max_val;
+    
+    //找到最大窗口
+    uint16_t win_1 = min_val;
+    uint16_t win_2 = mid_val - min_val;   
+    uint16_t win_3 = max_val - mid_val;    
+    uint16_t win_4 = pwm_period - max_val;
+
+    uint16_t max_win = win_1;
+    uint8_t id = 1;
+    uint16_t ccr = 0;
+    if(win_2 > max_win){max_win = win_2; id = 2;}
+    if(win_3 > max_win){max_win = win_3; id = 3;}
+    if(win_4 > max_win){max_win = win_4; id = 4;}
+    
+    switch(id)
+    {
+        case 1:
+            ccr = 0;
+            break;
+        
+        case 2:
+            ccr = min_val;
+            break;
+        
+        case 3:
+            ccr = mid_val;
+            break;
+        
+        case 4:
+            ccr = max_val;
+            break;
+    }
+
+    return ccr+CURRENT_WINDOW+CURRENT_DET_DELAY;
+}
+
+
+uint16_t the_max_ccr = 0;
+uint16_t aTest = 1000;
+uint16_t bTest = 0;
+uint16_t cTest = 0;
+void foc_output(uint16_t pwm_period, uint16_t a, uint16_t b, uint16_t c)
+{
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, aTest);
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
+//    
+//    the_max_ccr = current_window_get(pwm_period,aTest,0,0);
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, the_max_ccr);
     
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, a);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, b);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
     
-    the_max_ccr = a;
-    if(the_max_ccr < b)
-    {
-        the_max_ccr = b;
-    }
-    if(the_max_ccr < c)
-    {
-        the_max_ccr = c;
-    }
-    
+    the_max_ccr = current_window_get(pwm_period,a,b,c);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, the_max_ccr);
 }
 
@@ -72,9 +126,9 @@ void foc_root_init(void)
     GPIO_Init();
     
     HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_4);
-    HAL_TIM_Base_Start_IT(&htim1);
-
-    //foc_adc_offset_get(&foc, &injected_data[0], &injected_data[1]);    
+    HAL_TIM_Base_Start_IT(&htim1); 
+    
+    foc_adc_offset_get(&foc,&injected_data[0],&injected_data[1]);
     
     foc_output_enable(1);
     foc_zero_reset(&foc);
@@ -82,9 +136,14 @@ void foc_root_init(void)
     HAL_TIM_Base_Start_IT(&htim2);    
 }
 
+//float foc_get_angle(void)
+//{
+//    return foc_sensor_updata(&foc);
+//}
+
 float foc_get_angle(void)
 {
-    return foc_sensor_updata(&foc);
+    return foc_sensor_updata(&foc, as5600GetAngleRadians());
 }
 
 void foc_set_target(uint8_t _d, uint8_t _q, float _theta)
@@ -136,10 +195,15 @@ void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
     if(adc_data_get_flag == 2)
     {
         HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
+        float ca = ((float)injected_data[0] - foc.adc_offset.ch1)*3.3f*2000/4095;
+        float cb = ((float)injected_data[1] - foc.adc_offset.ch2)*3.3f*2000/4095;
+        float cc = -ca-cb;
+        foc_current_updata(&foc,ca,cb,cc);
     }
 }
 
-
+uint32_t cntget;
+uint32_t ccrget;
 void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM1)
@@ -147,6 +211,8 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
         // 检查并处理通道4中断
         if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
         {
+            cntget = htim->Instance->CNT;
+            ccrget = htim->Instance->CCR4;
             adc_data_get_flag = 0;
             HAL_ADCEx_InjectedStart_IT(&hadc1);
             HAL_ADCEx_InjectedStart_IT(&hadc2);
@@ -161,7 +227,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   if (htim->Instance == TIM2)
   {
 //    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
-    foc_get_angle();  
+//    foc_get_angle();  
     foc_control(&foc);   
 //    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,0);
       
