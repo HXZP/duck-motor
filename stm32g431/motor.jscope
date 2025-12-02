@@ -11,7 +11,7 @@
                 <Options TimeResolutionUs="1000000" />
             </Scope>
             <Trigger>
-                <Options Level="0" Symbol="injected_data[0]" On="0" Auto="0" Rise="0" Fall="0" />
+                <Options Level="0" Symbol="sensor_angle" On="0" Auto="0" Rise="0" Fall="0" />
             </Trigger>
         </Configuration>
         <Windows>
@@ -20,19 +20,13 @@
         </Windows>
         <SelectedSymbols>
             <Symbol>
-                <Options Name="injected_data[0]" Address="0x200007F6" Type="unsigned short" TypeID="7" Size="2" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="255" YMinSampled="1.79769e+308" YMaxSampled="-1.79769e+308" YAvgSampled="0" Offset="0" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="65535" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="injected_data[0]" />
+                <Options Name="sensor_angle" Address="0x20000644" Type="float" TypeID="1" Size="4" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="255" YMinSampled="0" YMaxSampled="6.28319" YAvgSampled="2.01928" Offset="4" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.angle.sensor_angle" />
             </Symbol>
             <Symbol>
-                <Options Name="injected_data[1]" Address="0x200007F8" Type="unsigned short" TypeID="7" Size="2" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" YMinSampled="1.79769e+308" YMaxSampled="-1.79769e+308" YAvgSampled="0" Offset="0" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="65535" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="injected_data[1]" />
+                <Options Name="mech_angle" Address="0x20000650" Type="float" TypeID="1" Size="4" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" YMinSampled="0.139627" YMaxSampled="6.28165" YAvgSampled="1.63211" Offset="8" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.angle.mech_angle" />
             </Symbol>
             <Symbol>
-                <Options Name="a" Address="0x20000574" Type="float" TypeID="1" Size="4" GraphColorRed="0" GraphColorGreen="255" GraphColorBlue="0" YMinSampled="1.79769e+308" YMaxSampled="-1.79769e+308" YAvgSampled="0" Offset="0" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.phase_current.a" />
-            </Symbol>
-            <Symbol>
-                <Options Name="b" Address="0x20000578" Type="float" TypeID="1" Size="4" GraphColorRed="0" GraphColorGreen="0" GraphColorBlue="255" YMinSampled="1.79769e+308" YMaxSampled="-1.79769e+308" YAvgSampled="0" Offset="0" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.phase_current.b" />
-            </Symbol>
-            <Symbol>
-                <Options Name="c" Address="0x2000057C" Type="float" TypeID="1" Size="4" GraphColorRed="255" GraphColorGreen="0" GraphColorBlue="0" YMinSampled="1.79769e+308" YMaxSampled="-1.79769e+308" YAvgSampled="0" Offset="0" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.phase_current.c" />
+                <Options Name="mech_velocity_rps" Address="0x20000660" Type="float" TypeID="1" Size="4" GraphColorRed="0" GraphColorGreen="255" GraphColorBlue="0" YMinSampled="0" YMaxSampled="0" YAvgSampled="0" Offset="12" ShowInGraph="1" YOffset="0" IsAutoConfig="0" YResolution="1" MaxValue="-2147483648" File="F:\Aproject\Duck_proj\motor\stm32g431\MDK-ARM/../../user/drivers\foc_init.c" DrawStyle="0" NameWithParents="foc.angle.mech_velocity_rps" />
             </Symbol>
         </SelectedSymbols>
     </Project>

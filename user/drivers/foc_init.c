@@ -7,6 +7,7 @@
 #include "stm32g4xx_hal_gpio.h"     // GPIO HAL库
 #include "stm32g4xx_hal_rcc.h"      // 时钟HAL库
 #include <stdio.h>
+#include "foc/foc_angle.h"
 
 //extern DMA_HandleTypeDef hdma_adc1;
 extern TIM_HandleTypeDef htim1;
@@ -113,10 +114,23 @@ foc_cfg_t cfg = {
     .get_angle_rad = as5600GetAngleRadians,
 };
 
+AngleEstimator estimator;
+AngleEstimatorConfig config =
+{
+    // 配置参数
+    .Ts = 0.0001f,          // 100us (10kHz)
+    .window_size = 50,      // 使用50个点进行最小二乘拟合（对应5ms窗口）
+    .angle_threshold = M_PI, // π弧度阈值
+    .max_angular_vel = 100.0f * M_PI, // 最大100转/秒
+    .smoothing_factor = 0.9f, // 平滑因子
+};
 
 void foc_root_init(void)
 {
     foc_init(&foc,&cfg);
+
+    // 初始化
+    AngleEstimator_Init(&estimator, &config);
 
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -128,7 +142,7 @@ void foc_root_init(void)
     HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_4);
     HAL_TIM_Base_Start_IT(&htim1); 
     
-    foc_adc_offset_get(&foc,&injected_data[0],&injected_data[1]);
+//    foc_adc_offset_get(&foc,&injected_data[0],&injected_data[1]);
     
     foc_output_enable(1);
     foc_zero_reset(&foc);
@@ -143,10 +157,11 @@ void foc_root_init(void)
 
 float foc_get_angle(void)
 {
-    return foc_sensor_updata(&foc, as5600GetAngleRadians());
+    float raw_angle = foc_sensor_updata(&foc, as5600GetAngleRadians());
+    return raw_angle;
 }
 
-void foc_set_target(uint8_t _d, uint8_t _q, float _theta)
+void foc_set_target(float _d, float _q, float _theta)
 {
     if(_d > 100)_d = 100;
     if(_q > 100)_q = 100;
@@ -175,51 +190,51 @@ void foc_output_enable(uint8_t enable)
 
 
 //参考电压3.3，采样偏置1.5，采样电阻10mo，放大倍数50，4095，(adc/4095*3.3 - 1.5)/50/0.01*1000 = mA
-uint8_t adc_data_get_flag = 0;
-void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-    if(hadc->Instance == ADC1)
-    {
-        // 获取所有注入通道的数据
-        injected_data[0] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
-        adc_data_get_flag++;
-    }
-    
-    else if(hadc->Instance == ADC2)
-    {
-        // 获取所有注入通道的数据
-        injected_data[1] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
-        adc_data_get_flag++;
-    }
-    
-    if(adc_data_get_flag == 2)
-    {
-        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
-        float ca = ((float)injected_data[0] - foc.adc_offset.ch1)*3.3f*2000/4095;
-        float cb = ((float)injected_data[1] - foc.adc_offset.ch2)*3.3f*2000/4095;
-        float cc = -ca-cb;
-        foc_current_updata(&foc,ca,cb,cc);
-    }
-}
+//uint8_t adc_data_get_flag = 0;
+//void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
+//{
+//    if(hadc->Instance == ADC1)
+//    {
+//        // 获取所有注入通道的数据
+//        injected_data[0] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
+//        adc_data_get_flag++;
+//    }
+//    
+//    else if(hadc->Instance == ADC2)
+//    {
+//        // 获取所有注入通道的数据
+//        injected_data[1] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
+//        adc_data_get_flag++;
+//    }
+//    
+//    if(adc_data_get_flag == 2)
+//    {
+//        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
+//        float ca = ((float)injected_data[0] - foc.adc_offset.ch1)*3.3f*2000/4095;
+//        float cb = ((float)injected_data[1] - foc.adc_offset.ch2)*3.3f*2000/4095;
+//        float cc = -ca-cb;
+//        foc_current_updata(&foc,ca,cb,cc);
+//    }
+//}
 
-uint32_t cntget;
-uint32_t ccrget;
-void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM1)
-    {
-        // 检查并处理通道4中断
-        if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
-        {
-            cntget = htim->Instance->CNT;
-            ccrget = htim->Instance->CCR4;
-            adc_data_get_flag = 0;
-            HAL_ADCEx_InjectedStart_IT(&hadc1);
-            HAL_ADCEx_InjectedStart_IT(&hadc2);
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,0);
-        }
-    }
-}
+//uint32_t cntget;
+//uint32_t ccrget;
+//void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
+//{
+//    if (htim->Instance == TIM1)
+//    {
+//        // 检查并处理通道4中断
+//        if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
+//        {
+//            cntget = htim->Instance->CNT;
+//            ccrget = htim->Instance->CCR4;
+//            adc_data_get_flag = 0;
+//            HAL_ADCEx_InjectedStart_IT(&hadc1);
+//            HAL_ADCEx_InjectedStart_IT(&hadc2);
+//            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,0);
+//        }
+//    }
+//}
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -228,9 +243,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   {
 //    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,1);
 //    foc_get_angle();  
-    foc_control(&foc);   
 //    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,0);
-      
+
+//    AngleEstimator_Process(&estimator, foc.angle.sensor_angle);
+//    float filtered_angle = AngleEstimator_GetFilteredAngle(&estimator);
+//    foc.angle.mech_velocity_rps = AngleEstimator_GetAngularVelocity(&estimator);
+//    foc_mech_estimate_updata(&foc, filtered_angle);
+
+    foc_control(&foc);   
+
     HAL_TIM_IRQHandler(&htim2);
   }
 }
@@ -259,6 +280,16 @@ static void GPIO_Init(void)
 
 
 
+//foc_pid_t speed_pid = {0};
+
+//void foc_pid_speed(void)
+//{
 
 
+//}
+
+////    speed_pid.percent =  foc.angle.sensor_angle; 
+////    q_set = foc_pi_ctrl(&speed_pid);  
+//      
+//    foc_set_target(0,q_set,0);//功率13.7W电流1.14A 
 

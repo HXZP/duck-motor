@@ -6,7 +6,7 @@
 void foc_root_init(void);
 float foc_get_angle(void);
 void foc_output_enable(uint8_t enable);
-void foc_set_target(uint8_t _d, uint8_t _q, float _theta);
+void foc_set_target(float _d, float _q, float _theta);
 
 
 

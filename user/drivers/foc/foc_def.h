@@ -122,7 +122,7 @@ typedef struct{
     float elec_angle360;
     float mech_angle360;	
 	float mech_angle360_pre;
-	float mech_velocity_rpm;
+	float mech_velocity_rps;
 }foc_angle_t;
 
 typedef struct{

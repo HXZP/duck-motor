@@ -10,20 +10,20 @@ float foc_pi_ctrl(foc_pid_t *pid)
 	
     if(pid->err > FOC_PI)
     {
-        pid->err -= FOC_PI;
+        pid->err -= 2*FOC_PI;
     }
     else if(pid->err < -FOC_PI)
     {
-        pid->err += FOC_PI;
+        pid->err += 2*FOC_PI;
     }
     
 	pid->i_acc += pid->err;
 	pid->i_out = pid->i * pid->i_acc;
-	
-	constrain(pid->i_out, -pid->i_out, pid->i_out);
+	constrain(pid->i_out, -pid->i_out_max, pid->i_out_max);
 
 	pid->out = pid->p * pid->err + pid->i_out;
-	
+	constrain(pid->out, -pid->out_max, pid->out_max);
+    
 	return pid->out;
 }
 

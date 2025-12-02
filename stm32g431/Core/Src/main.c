@@ -118,8 +118,8 @@ int main(void)
     /* USER CODE END WHILE */
     
     /* USER CODE BEGIN 3 */
-//    speed_pid.percent =  foc.angle.sensor_angle; 
-//    q_set = foc_pi_ctrl(&speed_pid);  
+    speed_pid.percent =  foc.angle.sensor_angle; 
+    q_set = foc_pi_ctrl(&speed_pid);  
       
     foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
     //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 

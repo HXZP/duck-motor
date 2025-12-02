@@ -228,6 +228,18 @@ float foc_sensor_updata(foc_t *foc,float angle)
     return angle;
 }
 
+float foc_mech_estimate_updata(foc_t *foc, float angle)
+{
+    //float angle = foc->cfg->get_angle_rad();
+
+    foc->angle.mech_angle = foc_angle_cycle(angle - foc->angle.zero_angle);
+    foc->angle.elec_angle = foc->angle.mech_angle * foc->info.pole_pairs;
+    
+    foc->park.theta = foc->angle.elec_angle;
+    
+    return foc->angle.mech_angle;
+}
+
 void foc_target_updata(foc_t *foc, foc_park_t target)
 {
     // if(target->d * target->d + target->q * target->q > foc->info.vector_voltage * foc->info.vector_voltage)
@@ -242,6 +254,8 @@ void foc_target_updata(foc_t *foc, foc_park_t target)
 
 void foc_current_updata(foc_t *foc, float a, float b, float c)
 {
+//    static float a
+    
     if(foc->state != Foc_Working)
     {
         return;
@@ -277,7 +291,7 @@ void foc_zero_reset(foc_t *foc)
 {
     if(foc->state == Foc_Zero_Angle_Init)
     {
-        foc->cfg->output(foc->cfg->pwm_period,foc->cfg->pwm_period*0.8f,0,0);
+        foc->cfg->output(foc->cfg->pwm_period,foc->cfg->pwm_period*0.5f,0,0);
         foc->cfg->delay(200);
         foc->angle.sensor_angle = foc->cfg->get_angle_rad();
         foc->angle.zero_angle = foc->angle.sensor_angle;
