@@ -29,7 +29,7 @@ foc_cfg_t cfg = {
 	.master_voltage = 12,
 	.pwm_period = 1600,
 	
-	.pwm_hz = 10000,
+	.pwm_hz = 20000,
 	.control_hz = 1000,
 	.sensor_hz = 5000,
     
@@ -92,17 +92,13 @@ void foc_output_enable(uint8_t enable)
 //401us
 void TIM2_IRQHandler(void)
 {
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 50);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 100);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-    
     
 //    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
     
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
-    foc_get_angle();  
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, 1);
+//    foc_get_angle();  
     foc_control(&foc);   
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 0);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, 0);
     
     HAL_TIM_IRQHandler(&htim2);
     

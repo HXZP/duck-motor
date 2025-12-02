@@ -104,7 +104,7 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  
+  foc_set_target(0,10,0);
 
   /* USER CODE END 2 */
 //    CAN_TxHeaderTypeDef TxHeader;
@@ -129,7 +129,10 @@ int main(void)
 //        // 发送错误处理
 //        Error_Handler();
 //    }
-      foc_set_target(0,target,0);
+//      foc_set_target(0,target,0);
+      
+      
+      foc_get_angle(); 
       
       
 //      if(ccr == 1600)
