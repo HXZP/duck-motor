@@ -15,17 +15,8 @@ extern ADC_HandleTypeDef hadc1;
 
 static void GPIO_Init(void);
 
-uint16_t injected_data[2] = {0};
-
-//#define ADC_BUFFER_SIZE 2  // 两个通道：ch0, ch1
-//__ALIGN_BEGIN uint16_t adc_buffer[ADC_BUFFER_SIZE] __ALIGN_END;
-
 void foc_output(uint16_t a, uint16_t b, uint16_t c)
 {
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-    
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, a);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, b);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
@@ -108,8 +99,10 @@ void TIM2_IRQHandler(void)
     
 //    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
     
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 1);
     foc_get_angle();  
     foc_control(&foc);   
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 0);
     
     HAL_TIM_IRQHandler(&htim2);
     

@@ -62,6 +62,7 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN 0 */
 uint16_t rawAngle;
 uint16_t ccr;
+float target = 0;
 /* USER CODE END 0 */
 
 /**
@@ -103,7 +104,7 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,30,0);
+  
 
   /* USER CODE END 2 */
 //    CAN_TxHeaderTypeDef TxHeader;
@@ -128,7 +129,7 @@ int main(void)
 //        // 发送错误处理
 //        Error_Handler();
 //    }
-      
+      foc_set_target(0,target,0);
       
       
 //      if(ccr == 1600)
@@ -140,8 +141,8 @@ int main(void)
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
 //      
-    HAL_Delay(1);
-    
+//    HAL_Delay(1);
+//    foc_get_angle();  
 //      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
 //    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
 //    HAL_Delay(500);
