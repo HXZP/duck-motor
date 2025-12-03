@@ -22,10 +22,6 @@ uint16_t injected_data[2] = {0};
 
 void foc_output(uint16_t a, uint16_t b, uint16_t c)
 {
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-    
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, a);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, b);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
@@ -38,7 +34,7 @@ foc_cfg_t cfg = {
 	.master_voltage = 12000,
 	.pwm_period = 1600,
 	
-	.pwm_hz = 10000,
+	.pwm_hz = 20000,
 	.control_hz = 1000,
 	.sensor_hz = 5000,
     
@@ -58,11 +54,6 @@ void foc_root_init(void)
     __HAL_TIM_MOE_ENABLE(&htim1);
     
     GPIO_Init();
-    
-//    HAL_TIM_OC_Start_IT(&htim1, TIM_CHANNEL_4);
-//    HAL_TIM_Base_Start_IT(&htim1);
-
-    foc_adc_offset_get(&foc, &injected_data[0], &injected_data[1]);    
     
     foc_output_enable(1);
     foc_zero_reset(&foc);
@@ -103,67 +94,20 @@ void foc_output_enable(uint8_t enable)
 }
 
 
-//参考电压3.3，采样偏置1.5，采样电阻10mo，放大倍数50，4095，(adc/4095*3.3 - 1.5)/50/0.01*1000 = mA
-int16_t current_data[3] = {0};
-int16_t current_data_last[3] = {0};
-int16_t current_lpf[3] = {0};
-void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-    if(hadc->Instance == ADC1)
-    {
-//        current_data_last[0] = current_data[0];
-//        current_data_last[1] = current_data[1];
-
-        // 获取所有注入通道的数据
-        injected_data[0] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_1);
-        injected_data[1] = HAL_ADCEx_InjectedGetValue(hadc, ADC_INJECTED_RANK_2);
-        
-        if(foc.adc_offset.init_flag)
-        {
-            current_data[0] = -((injected_data[0] - foc.adc_offset.ch1)*440/273);
-            current_data[1] = -((injected_data[1] - foc.adc_offset.ch2)*440/273);
-            current_data[2] = -current_data[0] - current_data[1];
-        }
-
-        
-//        // 一阶低通滤波
-//        current_lpf[0] = (current_data[0] + current_data_last[0])/2;
-//        current_lpf[1] = (current_data[1] + current_data_last[1])/2;
-
-//        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-    }
-}
-
-
-void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
-{
-    if (htim->Instance == TIM1)
-    {
-        // 检查并处理通道4中断
-        if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
-        {
-            
-            HAL_ADCEx_InjectedStart_IT(&hadc1);
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-        }
-    }
-}
-
 //401us
 void TIM2_IRQHandler(void)
 {
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 50);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 100);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-    
-    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
 //    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
     
-    foc_get_angle();  
+    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+    
+//    foc_get_angle();  
     foc_control(&foc);   
     
-    HAL_TIM_IRQHandler(&htim2);
     HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+    
+    HAL_TIM_IRQHandler(&htim2);
+    
 //    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
 }
 

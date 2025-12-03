@@ -103,7 +103,7 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,-(1<<14),0);
+  foc_set_target(0,-(1<<13),0);
 
   /* USER CODE END 2 */
 //    CAN_TxHeaderTypeDef TxHeader;
@@ -129,18 +129,9 @@ int main(void)
 //        Error_Handler();
 //    }
       
+      foc_get_angle();  
       
-      
-//      if(ccr == 1600)
-//          ccr = 0;
-//      else
-//          ccr++;
-//      
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 0);
-//      
-    HAL_Delay(1);
+//    HAL_Delay(1);
     
 //      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
 //    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
