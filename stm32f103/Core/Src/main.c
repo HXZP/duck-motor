@@ -18,7 +18,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "adc.h"
 #include "can.h"
 #include "tim.h"
 #include "gpio.h"
@@ -60,8 +59,7 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint16_t rawAngle;
-uint16_t ccr;
+
 /* USER CODE END 0 */
 
 /**
@@ -94,7 +92,6 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_TIM1_Init();
-  MX_ADC1_Init();
   MX_TIM2_Init();
   MX_CAN_Init();
   /* USER CODE BEGIN 2 */
@@ -103,37 +100,38 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,-(1<<13),0);
+//  foc_set_target(0,-(1<<13),0);
 
+
+    CAN_TxHeaderTypeDef TxHeader;
+    uint8_t TxData[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}; // 发送的数据
+    uint32_t TxMailbox; // 用于返回使用的发送邮箱
+    
+    // 配置发送报文头
+    TxHeader.StdId = 0x122;       // 标准标识符
+    TxHeader.ExtId = 0x00;        // 扩展标识符 (标准帧时通常为0)
+    TxHeader.IDE = CAN_ID_STD;    // 使用标准帧
+    TxHeader.RTR = CAN_RTR_DATA;  // 数据帧
+    TxHeader.DLC = 8;             // 数据长度 (0-8字节)   
   /* USER CODE END 2 */
-//    CAN_TxHeaderTypeDef TxHeader;
-//    uint8_t TxData[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}; // 发送的数据
-//    uint32_t TxMailbox; // 用于返回使用的发送邮箱
-//    
-//    // 配置发送报文头
-//    TxHeader.StdId = 0x123;       // 标准标识符
-//    TxHeader.ExtId = 0x00;        // 扩展标识符 (标准帧时通常为0)
-//    TxHeader.IDE = CAN_ID_STD;    // 使用标准帧
-//    TxHeader.RTR = CAN_RTR_DATA;  // 数据帧
-//    TxHeader.DLC = 8;             // 数据长度 (0-8字节)    
+ 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-//    HAL_ADCEx_InjectedStart_IT(&hadc1);
     // 等待有空闲的发送邮箱，然后发送
-//    while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0); // 等待空闲邮箱
-//    if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
-//    {
-//        // 发送错误处理
-//        Error_Handler();
-//    }
+    while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0); // 等待空闲邮箱
+    if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
+    {
+        // 发送错误处理
+        Error_Handler();
+    }
       
-      foc_get_angle();  
+    foc_get_angle();  
       
-//    HAL_Delay(1);
+    HAL_Delay(1);
     
-//      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
 //    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
 //    HAL_Delay(500);
 //    rawAngle = foc_get_angle();  
@@ -153,7 +151,6 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -179,12 +176,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
-  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }

@@ -11,14 +11,9 @@
 //extern DMA_HandleTypeDef hdma_adc1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
-extern ADC_HandleTypeDef hadc1;
+
 
 static void GPIO_Init(void);
-
-uint16_t injected_data[2] = {0};
-
-//#define ADC_BUFFER_SIZE 2  // 两个通道：ch0, ch1
-//__ALIGN_BEGIN uint16_t adc_buffer[ADC_BUFFER_SIZE] __ALIGN_END;
 
 void foc_output(uint16_t a, uint16_t b, uint16_t c)
 {
@@ -94,21 +89,16 @@ void foc_output_enable(uint8_t enable)
 }
 
 
-//401us
-void TIM2_IRQHandler(void)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-//    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
-    
-    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-    
-//    foc_get_angle();  
-    foc_control(&foc);   
-    
-    HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-    
-    HAL_TIM_IRQHandler(&htim2);
-    
-//    HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
+    if (htim->Instance == TIM2) {
+        
+        //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
+        
+        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+        foc_control(&foc);   
+        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+    }
 }
 
 //GPIO_PIN_14 Logic high enables OUT. Internalpulldown
