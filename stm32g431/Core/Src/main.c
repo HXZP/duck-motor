@@ -18,10 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "adc.h"
 #include "fdcan.h"
-#include "i2c.h"
-#include "tim.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -47,7 +44,25 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+// 在你的用户文件中（例如 main.c）
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    uint8_t RxData[8];
+    FDCAN_RxHeaderTypeDef RxHeader;
 
+    // 1. 从FIFO中读取报文
+    if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK)
+    {
+        // 2. 处理接收到的数据
+        // 例如：判断ID，将数据拷贝到应用缓冲区等
+        if (RxHeader.Identifier == 0x122)
+        {
+            // 处理ID为0x123的报文
+        }
+    }
+    // 注意：通常不需要手动清除中断挂起标志，
+    // 因为 HAL_FDCAN_GetRxMessage 函数内部会处理FIFO指针[citation:9]。
+}
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -90,11 +105,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ADC1_Init();
   MX_FDCAN1_Init();
-  MX_I2C1_Init();
-  MX_TIM1_Init();
-  MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -103,11 +114,30 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    FDCAN_TxHeaderTypeDef TxHeader;
+    uint8_t TxData[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}; // 发送的数据
+
+    TxHeader.Identifier = 0x123;          // 报文ID (标准ID)
+    TxHeader.IdType = FDCAN_STANDARD_ID;  // 标准帧
+    TxHeader.TxFrameType = FDCAN_DATA_FRAME; // 数据帧
+    TxHeader.DataLength = FDCAN_DLC_BYTES_8; // 数据长度8字节
+    TxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    TxHeader.BitRateSwitch = FDCAN_BRS_OFF; // 经典CAN模式，关闭比特率切换
+    TxHeader.FDFormat = FDCAN_CLASSIC_CAN;  // 经典CAN帧
+    TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    TxHeader.MessageMarker = 0;
+
+    // 将报文加入发送FIFO，HAL库会处理后续的发送
+    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TxHeader, TxData) != HAL_OK)
+    {
+        // 发送错误处理
+    }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
     HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_9); 
-    HAL_Delay(500);
+    HAL_Delay(100);
   }
   /* USER CODE END 3 */
 }

@@ -114,7 +114,7 @@ int main(void)
     TxHeader.RTR = CAN_RTR_DATA;  // 数据帧
     TxHeader.DLC = 8;             // 数据长度 (0-8字节)   
   /* USER CODE END 2 */
- 
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)

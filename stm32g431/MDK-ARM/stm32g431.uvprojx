@@ -82,7 +82,7 @@
           </BeforeMake>
           <AfterMake>
             <RunUserProg1>0</RunUserProg1>
-            <RunUserProg2>0</RunUserProg2>
+            <RunUserProg2>1</RunUserProg2>
             <UserProg1Name></UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
@@ -406,24 +406,9 @@
               <FilePath>../Core/Src/gpio.c</FilePath>
             </File>
             <File>
-              <FileName>adc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Core/Src/adc.c</FilePath>
-            </File>
-            <File>
               <FileName>fdcan.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Core/Src/fdcan.c</FilePath>
-            </File>
-            <File>
-              <FileName>i2c.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Core/Src/i2c.c</FilePath>
-            </File>
-            <File>
-              <FileName>tim.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Core/Src/tim.c</FilePath>
             </File>
             <File>
               <FileName>stm32g4xx_it.c</FileName>
@@ -441,19 +426,9 @@
           <GroupName>Drivers/STM32G4xx_HAL_Driver</GroupName>
           <Files>
             <File>
-              <FileName>stm32g4xx_hal_adc.c</FileName>
+              <FileName>stm32g4xx_hal_fdcan.c</FileName>
               <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_adc_ex.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_adc_ex.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_ll_adc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_ll_adc.c</FilePath>
+              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_fdcan.c</FilePath>
             </File>
             <File>
               <FileName>stm32g4xx_hal.c</FileName>
@@ -519,31 +494,6 @@
               <FileName>stm32g4xx_hal_cortex.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_cortex.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_fdcan.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_fdcan.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_i2c.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_i2c.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_i2c_ex.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_i2c_ex.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_tim.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim.c</FilePath>
-            </File>
-            <File>
-              <FileName>stm32g4xx_hal_tim_ex.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim_ex.c</FilePath>
             </File>
           </Files>
         </Group>

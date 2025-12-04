@@ -69,6 +69,8 @@ void MX_CAN_Init(void)
   
     HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
     HAL_CAN_Start(&hcan);
+  
+    
   /* USER CODE END CAN_Init 2 */
 
 }
