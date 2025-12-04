@@ -4,6 +4,8 @@
 #include "math.h"
 #include "stdint.h"
 
+/*传感器的值转弧度再x1000传入*/
+
 /*
 分析上，从电压矢量分解到相位电压矢量，再分解到Clarke坐标下的静止坐标系，再分解到Park坐标下的旋转坐标系得到d轴和q轴的电压矢量。
 电机的力来自磁力，磁力由电流产生，电流由电压产生，电压由电压矢量产生，最后输出的就是能够控制电压矢量的控制时间。
@@ -133,6 +135,22 @@ typedef struct{
 
 typedef struct{
 
+    //弧度
+    int32_t mech_angle;
+    int32_t last_mech_angle;  
+    int32_t mech_angle_diff;  
+    
+    uint32_t now_time;    
+    uint32_t last_time;
+    uint32_t time_diff;
+    
+    int32_t speed;
+    
+}foc_speed_t;
+
+
+typedef struct{
+
     int32_t master_voltage;//母线电压
     int32_t vector_voltage;//基本电压矢量:0~母线电压/sqrt(3)
     uint8_t pole_pairs;//极对数
@@ -155,6 +173,7 @@ typedef struct{
     
 	void (*output)(uint16_t a, uint16_t b, uint16_t c);
     void (*delay)(uint32_t ms);
+    uint32_t (*get_time)(void); //ms
     int32_t (*get_angle_rad)(void);
 }foc_cfg_t;
 
@@ -174,7 +193,8 @@ typedef struct{
     foc_pwm_duty_t       pwm_duty;
 
     foc_angle_t  angle;
-
+    foc_speed_t  speed;
+    
     foc_park_t         target_park;
 
     foc_current_adc_offset_t adc_offset;

@@ -1,6 +1,8 @@
 #include "foc_init.h"
 #include "foc/foc_core.h"
 #include "as5600.h"
+#include "flash.h"
+#include "log.h"
 
 #include "stm32f1xx_hal.h"          // HAL库核心头文件
 #include "stm32f1xx_hal_tim.h"      // 定时器HAL库
@@ -11,6 +13,8 @@
 //extern DMA_HandleTypeDef hdma_adc1;
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
+
+
 
 
 static void GPIO_Init(void);
@@ -36,6 +40,7 @@ foc_cfg_t cfg = {
     .output = foc_output,
     .delay = HAL_Delay,
     .get_angle_rad = as5600GetAngleRadians,
+    .get_time = HAL_GetTick,
 };
 
 
@@ -51,7 +56,21 @@ void foc_root_init(void)
     GPIO_Init();
     
     foc_output_enable(1);
-    foc_zero_reset(&foc);
+
+    int32_t zero_angle = 0;
+    if(LoadCalibrationData(&zero_angle))
+    {
+        foc_zero_reset_manual(&foc, zero_angle);
+        printf("zero angle loaded: %d\n", zero_angle);
+    }
+    else
+    {
+        zero_angle = foc_zero_reset(&foc);
+        SaveCalibrationData(zero_angle);
+        printf("zero angle saved: %d\n", zero_angle);
+    }
+
+    foc_speed_time_init(&foc);
 
     HAL_TIM_Base_Start_IT(&htim2);    
 }

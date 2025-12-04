@@ -4,7 +4,7 @@
 */
 #include "foc/foc_core.h"
 #include <stdlib.h>
-
+#include "app/log.h"
 
 /*
     **  @brief  N值到扇区
@@ -379,14 +379,17 @@ int32_t foc_sensor_updata(foc_t *foc)
     foc->angle.sensor_angle = foc->cfg->get_angle_rad();
     foc->angle.mech_angle = foc_angle_cycle(foc->angle.sensor_angle - foc->angle.zero_angle);
     foc->angle.elec_angle = foc->angle.mech_angle * foc->info.pole_pairs;
-	
 	foc->park.theta = foc->angle.elec_angle;//angle_normalize(foc->angle.elec_angle);
-	
-//	foc->angle.mech_angle360_pre = foc->angle.mech_angle360;
-//	foc->angle.elec_angle360 = foc->angle.elec_angle / 2 /FOC_PI * 360;
-//	foc->angle.mech_angle360 = foc->angle.mech_angle / 2 /FOC_PI * 360;
-//	foc->angle.mech_velocity_rpm = (foc->angle.mech_angle360 - foc->angle.mech_angle360_pre) * foc->cfg->sensor_hz/60;// deta角度/deta时间 = 角速度（°/s） 角速度/360*60 = 转速rpm
 
+    foc->speed.last_time = foc->speed.now_time;
+    foc->speed.now_time = foc->cfg->get_time();
+    foc->speed.time_diff = foc->speed.now_time - foc->speed.last_time;
+    
+    foc->speed.last_mech_angle = foc->speed.mech_angle;
+    foc->speed.mech_angle = foc->angle.mech_angle;
+    foc->speed.speed = (foc->angle.mech_angle - foc->speed.last_mech_angle) * 60 / (foc->speed.time_diff);//    foc->speed.mech_velocity_rpm = foc->angle.mech_angle * 60000 / (foc->info.pole_pairs * foc->speed.time_diff);
+
+    printf("mech_angle: %d, speed: %d\n", foc->speed.mech_angle, foc->speed.speed);
     return foc->angle.sensor_angle;
 }
 
@@ -423,7 +426,7 @@ void foc_control(foc_t *foc)
     foc->cfg->output(foc->pwm_duty.a,foc->pwm_duty.b,foc->pwm_duty.c);
 }
 
-void foc_zero_reset(foc_t *foc)
+int32_t foc_zero_reset(foc_t *foc)
 {
     if(foc->state == Foc_Zero_Angle_Init)
     {
@@ -433,35 +436,22 @@ void foc_zero_reset(foc_t *foc)
         foc->cfg->output(0,0,0);
         foc->state = Foc_Working;
     }
+
+    return foc->angle.zero_angle;
 }
 
-void foc_adc_offset_get(foc_t *foc, uint16_t* ch1, uint16_t* ch2)
+void foc_zero_reset_manual(foc_t *foc, int32_t angle)
 {
-    uint16_t *adc_data_ch1 = malloc(sizeof(uint16_t)*250);
-    uint16_t *adc_data_ch2 = malloc(sizeof(uint16_t)*250);
-
-    for(foc->adc_offset.cnt = 0; foc->adc_offset.cnt < 250; foc->adc_offset.cnt++)
+    if(foc->state == Foc_Zero_Angle_Init)
     {
-        adc_data_ch1[foc->adc_offset.cnt] = *ch1;
-        adc_data_ch2[foc->adc_offset.cnt] = *ch2;
-        foc->cfg->delay(1);
+        foc->angle.zero_angle = angle;
+        foc->state = Foc_Working;
     }
-
-    for(foc->adc_offset.cnt = 0; foc->adc_offset.cnt < 250; foc->adc_offset.cnt++)
-    {
-        foc->adc_offset.ch1_sum += adc_data_ch1[foc->adc_offset.cnt];
-        foc->adc_offset.ch2_sum += adc_data_ch2[foc->adc_offset.cnt];
-    }
-
-    foc->adc_offset.ch1 = foc->adc_offset.ch1_sum / 250;
-    foc->adc_offset.ch2 = foc->adc_offset.ch2_sum / 250;
-
-    free(adc_data_ch1);
-    free(adc_data_ch2);
-
-    foc->adc_offset.init_flag = 1;
 }
-    
-    
 
+
+void foc_speed_time_init(foc_t *foc)
+{
+    foc->speed.now_time = foc->cfg->get_time();
+}
 

@@ -341,7 +341,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F103xB</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;../../user/drivers;../../user/app</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F1xx_HAL_Driver/Inc/Legacy;../Drivers/STM32F1xx_HAL_Driver/Inc;../Drivers/CMSIS/Device/ST/STM32F1xx/Include;../Drivers/CMSIS/Include;..\..\user</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -819,62 +819,67 @@
           </Files>
         </Group>
         <Group>
-          <GroupName>User/drivers</GroupName>
+          <GroupName>User/app</GroupName>
           <Files>
-            <File>
-              <FileName>soft_iic.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\soft_iic.c</FilePath>
-            </File>
             <File>
               <FileName>as5600.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\as5600.c</FilePath>
+              <FilePath>..\..\user\app\as5600.c</FilePath>
+            </File>
+            <File>
+              <FileName>foc_init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\foc_init.c</FilePath>
             </File>
             <File>
               <FileName>log.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\log.c</FilePath>
+              <FilePath>..\..\user\app\log.c</FilePath>
             </File>
             <File>
               <FileName>protocol.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\protocol.c</FilePath>
+              <FilePath>..\..\user\app\protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>soft_iic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\soft_iic.c</FilePath>
+            </File>
+            <File>
+              <FileName>flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\flash.c</FilePath>
             </File>
           </Files>
         </Group>
         <Group>
-          <GroupName>User/drivers/rtt</GroupName>
+          <GroupName>User/rtt</GroupName>
           <Files>
             <File>
               <FileName>SEGGER_RTT.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\rtt\SEGGER_RTT.c</FilePath>
+              <FilePath>..\..\user\rtt\SEGGER_RTT.c</FilePath>
             </File>
             <File>
               <FileName>SEGGER_RTT_printf.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\rtt\SEGGER_RTT_printf.c</FilePath>
+              <FilePath>..\..\user\rtt\SEGGER_RTT_printf.c</FilePath>
             </File>
           </Files>
         </Group>
         <Group>
-          <GroupName>User/drivers/foc</GroupName>
+          <GroupName>User/foc</GroupName>
           <Files>
-            <File>
-              <FileName>foc_init.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\foc_init.c</FilePath>
-            </File>
             <File>
               <FileName>foc_core.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\foc\foc_core.c</FilePath>
+              <FilePath>..\..\user\foc\foc_core.c</FilePath>
             </File>
             <File>
               <FileName>foc_math.c</FileName>
               <FileType>1</FileType>
-              <FilePath>..\..\user\drivers\foc\foc_math.c</FilePath>
+              <FilePath>..\..\user\foc\foc_math.c</FilePath>
             </File>
           </Files>
         </Group>

@@ -101,7 +101,7 @@ uint16_t as5600GetAngle(void)
 
 /**
  * @brief 获取AS5600角度(弧度)
- * @return 角度值(0-2π弧度)
+* @return 角度值(0-2π弧度)x1000倍
  */
 //uint16_t angle_sensor_same = 0;
 //uint16_t angle_get_cnt = 0;
