@@ -389,7 +389,7 @@ int32_t foc_sensor_updata(foc_t *foc)
     foc->speed.mech_angle = foc->angle.mech_angle;
     foc->speed.speed = (foc->angle.mech_angle - foc->speed.last_mech_angle) * 60 / (foc->speed.time_diff);//    foc->speed.mech_velocity_rpm = foc->angle.mech_angle * 60000 / (foc->info.pole_pairs * foc->speed.time_diff);
 
-    printf("mech_angle: %d, speed: %d\n", foc->speed.mech_angle, foc->speed.speed);
+//    printf("mech_angle: %d, speed: %d\n", foc->speed.mech_angle, foc->speed.speed);
     return foc->angle.sensor_angle;
 }
 
