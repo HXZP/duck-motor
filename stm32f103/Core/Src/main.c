@@ -28,6 +28,8 @@
 #include "app/soft_iic.h"
 #include "app/as5600.h"
 #include "app/foc_init.h"
+#include "foc/foc_core.h"
+#include "foc/foc_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,7 +50,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+foc_pid_t speed_pid = {0};
+extern foc_t foc;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,7 +62,7 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+int16_t q_set = 0;
 /* USER CODE END 0 */
 
 /**
@@ -100,7 +103,7 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,-(1<<13),0);
+  foc_set_target(0,-(1<<14),0);
 
 
 //    CAN_TxHeaderTypeDef TxHeader;
@@ -126,6 +129,12 @@ int main(void)
 //        // 发送错误处理
 //        Error_Handler();
 //    }
+      
+//    speed_pid.percent =  foc.angle.sensor_angle; 
+//    q_set = foc_pi_ctrl(&speed_pid);  
+//      
+//    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
+      
       
     foc_get_angle();  
       
