@@ -172,6 +172,7 @@ typedef struct{
 	
 	uint16_t pwm_hz;
 	uint16_t control_hz;
+    uint16_t control_khz;
 	uint16_t sensor_hz;
     
 	void (*output)(uint16_t a, uint16_t b, uint16_t c);
@@ -202,6 +203,13 @@ typedef struct{
 
     foc_current_adc_offset_t adc_offset;
     
+    struct{
+    
+        uint32_t cnt;
+        uint8_t  update_flag;
+    }solving;
+    
+    
 	const foc_cfg_t *cfg;
 }foc_t;
 
@@ -218,7 +226,7 @@ void foc_zero_reset_manual(foc_t *foc, int32_t angle);
 void foc_adc_offset_get(foc_t *foc, uint16_t* ch1, uint16_t*ch2);
 void foc_speed_time_init(foc_t *foc);
 
-
+uint8_t foc_get_angle_update_flag(foc_t *foc);
 
 
 

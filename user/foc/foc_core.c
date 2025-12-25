@@ -376,6 +376,8 @@ void foc_init(foc_t *foc, const foc_cfg_t *cfg)
 /*angle:0~1*/
 int32_t foc_sensor_updata(foc_t *foc)
 {  
+
+    
     foc->angle.sensor_angle = foc->cfg->get_angle_rad();
     foc->angle.mech_angle = foc_angle_cycle(foc->angle.sensor_angle - foc->angle.zero_angle);
     foc->angle.elec_angle = foc->angle.mech_angle * foc->info.pole_pairs;
@@ -387,9 +389,21 @@ int32_t foc_sensor_updata(foc_t *foc)
     
     foc->speed.last_mech_angle = foc->speed.mech_angle;
     foc->speed.mech_angle = foc->angle.mech_angle;
-    foc->speed.speed = (foc->angle.mech_angle - foc->speed.last_mech_angle) * 60 / (foc->speed.time_diff);//    foc->speed.mech_velocity_rpm = foc->angle.mech_angle * 60000 / (foc->info.pole_pairs * foc->speed.time_diff);
-
-//    printf("mech_angle: %d, speed: %d\n", foc->speed.mech_angle, foc->speed.speed);
+    
+    int32_t angle_err;
+    angle_err = (foc->angle.mech_angle - foc->speed.last_mech_angle);
+    if(angle_err > FOC_PIx1000)
+    {
+        angle_err -= 2*FOC_PIx1000;
+    }
+    else if(angle_err < -FOC_PIx1000)
+    {
+        angle_err += 2*FOC_PIx1000;
+    }
+    foc->speed.mech_angle_diff = angle_err;
+    
+    
+    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
     return foc->angle.sensor_angle;
 }
 
@@ -424,6 +438,13 @@ void foc_control(foc_t *foc)
     foc_get_pwm_duty(&foc->pwm_duty, &foc->output_vector);
     
     foc->cfg->output(foc->pwm_duty.a,foc->pwm_duty.b,foc->pwm_duty.c);
+    
+    foc->solving.cnt++;
+    if(foc->solving.cnt >= foc->cfg->control_khz)
+    {
+        foc->solving.update_flag = 1;
+        foc->solving.cnt = 0;
+    }
 }
 
 int32_t foc_zero_reset(foc_t *foc)
@@ -455,3 +476,13 @@ void foc_speed_time_init(foc_t *foc)
     foc->speed.now_time = foc->cfg->get_time();
 }
 
+uint8_t foc_get_angle_update_flag(foc_t *foc)
+{
+    if(foc->solving.update_flag)
+    {
+        foc->solving.update_flag = 0;
+        return 1;
+    }
+    
+    return 0;
+}

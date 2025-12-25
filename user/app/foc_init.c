@@ -35,6 +35,7 @@ foc_cfg_t cfg = {
 	
 	.pwm_hz = 20000,
 	.control_hz = 1000,
+    .control_khz = 1,
 	.sensor_hz = 5000,
     
     .output = foc_output,
@@ -77,7 +78,12 @@ void foc_root_init(void)
 
 int32_t foc_get_angle(void)
 {
-    return foc_sensor_updata(&foc);
+    if(foc_get_angle_update_flag(&foc))
+    {
+        return foc_sensor_updata(&foc);
+    }
+   
+    return 0;
 }
 
 void foc_set_target(int32_t _d, int32_t _q, int32_t _theta)

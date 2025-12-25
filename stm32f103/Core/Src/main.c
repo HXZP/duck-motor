@@ -103,7 +103,7 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,-(1<<14),0);
+  foc_set_target(0,-(1<<12),0);
 
 
 //    CAN_TxHeaderTypeDef TxHeader;
@@ -135,10 +135,10 @@ int main(void)
 //      
 //    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
       
-      
+    //定时器触发1khz角度异步采样
     foc_get_angle();  
       
-    HAL_Delay(1);
+
     
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
 //    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);

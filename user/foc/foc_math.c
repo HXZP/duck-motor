@@ -27,7 +27,7 @@ float foc_pi_ctrl(foc_pid_t *pid)
 	return pid->out;
 }
 
-
+//int32_t foc_angle_circle()
 
 
 
