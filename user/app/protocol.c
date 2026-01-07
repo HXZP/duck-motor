@@ -1,7 +1,7 @@
 #include "stm32f1xx_it.h"
 #include "can.h"
 #include "log.h"
-
+#include "flash.h"
 
 
 /* 重写 HAL_CAN_RxFifo0MsgPendingCallback，处理 FIFO0 的数据 */

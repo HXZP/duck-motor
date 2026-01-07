@@ -19,36 +19,36 @@ uint32_t Calculate_CRC32(uint32_t* data, uint32_t len) {
     return CRC->DR;
 }
 
-uint8_t LoadCalibrationData(int32_t* angle) {
-    MotorCalibrationData data;
+uint8_t Load_Recoder(recoder_data* data) {
+    MotorCalibrationData _data;
     uint32_t* src = (uint32_t*)FLASH_USER_ADDR;
     
     // 1. 读取Flash数据
-    memcpy(&data, src, sizeof(MotorCalibrationData));
+    memcpy(&_data, src, sizeof(MotorCalibrationData));
     
     // 2. 检查数据头标志
-    if(data.magic != DATA_MAGIC) {
+    if(_data.magic != DATA_MAGIC) {
         return 0; // 数据无效
     }
     
     // 3. 验证CRC32（仅校验magic和angle字段）
-    uint32_t computed_crc = Calculate_CRC32((uint32_t*)&data, 2);
+    uint32_t computed_crc = Calculate_CRC32((uint32_t*)&_data, 2);
     
-    if(computed_crc == data.crc32) {
-        *angle = data.calibration_angle;
+    if(computed_crc == _data.crc32) {
+        *data = _data.data;
         return 1; // 数据可信
     }
     return 0; // 校验失败
 }
 
-void SaveCalibrationData(int32_t angle) {
-    MotorCalibrationData data;
+void Save_Recoder(recoder_data data) {
+    MotorCalibrationData _data;
     uint32_t PageError = 0;
     
     // 1. 填充数据结构
-    data.magic = DATA_MAGIC;
-    data.calibration_angle = angle;
-    data.crc32 = Calculate_CRC32((uint32_t*)&data, 2); // 计算前8字节的CRC
+    _data.magic = DATA_MAGIC;
+    _data.data = data;
+    _data.crc32 = Calculate_CRC32((uint32_t*)&data, 2); // 计算前8字节的CRC
     
     // 2. 解锁Flash
     HAL_FLASH_Unlock();
@@ -61,8 +61,8 @@ void SaveCalibrationData(int32_t angle) {
     HAL_FLASHEx_Erase(&erase, &PageError);
     
     // 4. 写入数据（按字32位写入）
-    uint32_t* pData = (uint32_t*)&data;
-    for(uint32_t i = 0; i < sizeof(data)/4; i++) {
+    uint32_t* pData = (uint32_t*)&_data;
+    for(uint32_t i = 0; i < sizeof(MotorCalibrationData)/4; i++) {
         HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, 
                          FLASH_USER_ADDR + i*4, 
                          pData[i]);

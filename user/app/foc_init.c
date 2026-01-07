@@ -44,6 +44,12 @@ foc_cfg_t cfg = {
     .get_time = HAL_GetTick,
 };
 
+int32_t foc_zero_angle_reset(void)
+{
+    foc.state = Foc_Zero_Angle_Init;
+    return foc_zero_reset(&foc);
+}
+
 
 void foc_root_init(void)
 {
@@ -58,17 +64,17 @@ void foc_root_init(void)
     
     foc_output_enable(1);
 
-    int32_t zero_angle = 0;
-    if(LoadCalibrationData(&zero_angle))
+    recoder_data data = {0};
+    if(Load_Recoder(&data))
     {
-        foc_zero_reset_manual(&foc, zero_angle);
-        printf("zero angle loaded: %d\n", zero_angle);
+        foc_zero_reset_manual(&foc, data.calibration_angle);
+        printf("zero angle loaded: %d\n", data.calibration_angle);
     }
     else
     {
-        zero_angle = foc_zero_reset(&foc);
-        SaveCalibrationData(zero_angle);
-        printf("zero angle saved: %d\n", zero_angle);
+        data.calibration_angle = foc_zero_angle_reset();
+        Save_Recoder(data);
+        printf("zero angle saved: %d\n", data.calibration_angle);
     }
 
     foc_speed_time_init(&foc);
@@ -82,7 +88,7 @@ int32_t foc_get_angle(void)
     {
         return foc_sensor_updata(&foc);
     }
-   
+
     return 0;
 }
 

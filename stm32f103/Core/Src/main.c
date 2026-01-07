@@ -30,6 +30,7 @@
 #include "app/foc_init.h"
 #include "foc/foc_core.h"
 #include "foc/foc_math.h"
+#include "app/rtt_protocol.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -103,51 +104,25 @@ int main(void)
   as5600Init();
   foc_root_init();
   
-  foc_set_target(0,-(1<<12),0);
+//  foc_set_target(0,-(1<<12),0);
 
-
-//    CAN_TxHeaderTypeDef TxHeader;
-//    uint8_t TxData[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}; // 发送的数据
-//    uint32_t TxMailbox; // 用于返回使用的发送邮箱
-//    
-//    // 配置发送报文头
-//    TxHeader.StdId = 0x122;       // 标准标识符
-//    TxHeader.ExtId = 0x00;        // 扩展标识符 (标准帧时通常为0)
-//    TxHeader.IDE = CAN_ID_STD;    // 使用标准帧
-//    TxHeader.RTR = CAN_RTR_DATA;  // 数据帧
-//    TxHeader.DLC = 8;             // 数据长度 (0-8字节)   
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // 等待有空闲的发送邮箱，然后发送
-//    while(HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0); // 等待空闲邮箱
-//    if (HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox) != HAL_OK)
-//    {
-//        // 发送错误处理
-//        Error_Handler();
-//    }
-      
-//    speed_pid.percent =  foc.angle.sensor_angle; 
-//    q_set = foc_pi_ctrl(&speed_pid);  
-//      
 //    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
       
     //定时器触发1khz角度异步采样
     foc_get_angle();  
-      
 
-    
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_4, ccr);
-//    HAL_GPIO_TogglePin(LED_GPIO_Port,LED_Pin);
-//    HAL_Delay(500);
-//    rawAngle = foc_get_angle();  
-//    printf("%d\r\n",rawAngle);  
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    process_rtt_commands();
+      
+      
   }
   /* USER CODE END 3 */
 }

@@ -5,13 +5,18 @@
 #include "stm32f1xx_hal.h"
 
 typedef struct {
-    uint32_t magic;         // 数据头标志
     int32_t calibration_angle; // 校准角度
+    uint32_t can_id; //can的id号
+} recoder_data;
+
+typedef struct {
+    uint32_t magic;         // 数据头标志
+    recoder_data data;
     uint32_t crc32;         // 校验码
 } MotorCalibrationData;
 
-uint8_t LoadCalibrationData(int32_t* angle);
-void SaveCalibrationData(int32_t angle);
+uint8_t Load_Recoder(recoder_data* data);
+void Save_Recoder(recoder_data data);
 
 
 

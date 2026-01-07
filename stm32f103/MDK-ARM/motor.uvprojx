@@ -851,6 +851,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\user\app\flash.c</FilePath>
             </File>
+            <File>
+              <FileName>rtt_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\rtt_protocol.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

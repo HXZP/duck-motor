@@ -5,9 +5,9 @@
 #include "stm32f1xx_hal.h"
 
 // 软件I2C引脚定义
-#define I2C_SCL_PIN    GPIO_PIN_7
+#define I2C_SCL_PIN    GPIO_PIN_6
 #define I2C_SCL_PORT   GPIOB
-#define I2C_SDA_PIN    GPIO_PIN_6
+#define I2C_SDA_PIN    GPIO_PIN_7
 #define I2C_SDA_PORT   GPIOB
 
 void I2C_Init(void);

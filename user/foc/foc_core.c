@@ -403,7 +403,7 @@ int32_t foc_sensor_updata(foc_t *foc)
     foc->speed.mech_angle_diff = angle_err;
     
     
-    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
+//    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
     return foc->angle.sensor_angle;
 }
 
