@@ -119,16 +119,43 @@ void foc_output_enable(uint8_t enable)
     }
 }
 
-
+uint16_t led_cnt = 0;
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM2) {
         
-        //HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_8);
+        led_cnt++;
+
+        if(led_cnt <= 700)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+        }
+        else if(led_cnt <= 800)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+        }   
+        else if(led_cnt <= 900)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+        }
+        else if(led_cnt <= 1000)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+        }
+        else if(led_cnt <= 1100)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+        }
+        else if(led_cnt < 1500)
+        {
+            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+        }
+        else if(led_cnt == 1500)
+        {
+            led_cnt = 0;
+        }        
         
-        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
         foc_control(&foc);   
-        HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
     }
 }
 
