@@ -9,6 +9,7 @@ typedef enum {
     CMD_IDLE,
     CMD_ANGLE_RESET,
     CMD_CAN_SET,
+    CMD_CAN_GET,
     CMD_Q_SET,
     CMD_SPEED_PID_PARAM,
     CMD_SPEED_PID_TARGET,
@@ -38,6 +39,10 @@ static PARSED_COMMAND parse_command(const char* cmd_line) {
     
     if (strstr(line, "can set") == line) {
         return CMD_CAN_SET;
+    }
+
+    if (strstr(line, "can get") == line) {
+        return CMD_CAN_GET;
     }
     
     if (strstr(line, "q set") == line) {
@@ -176,8 +181,11 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
     switch(cmd) {
         case CMD_ANGLE_RESET:
             printf("RTT CLI: Executing angle reset...\n");
-            // TODO: Call your angle sensor reset function
-            printf("RTT CLI: Angle reset completed.\n");
+            recoder_data data = {0};
+            Load_Recoder(&data);
+            data.calibration_angle = foc_zero_angle_reset();
+            Save_Recoder(data);
+            printf("RTT CLI: Angle reset completed, angle: %d.\n", data.calibration_angle);
             break;
             
         case CMD_CAN_SET: {
@@ -189,14 +197,25 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
             if (strncmp(p, "0x", 2) == 0 || strncmp(p, "0X", 2) == 0) {
                 unsigned int can_id = (unsigned int)strtoul(p, NULL, 16);
                 printf("RTT CLI: Setting CAN ID to 0x%X (%u)\n", can_id, can_id);
-                // TODO: Call your CAN ID set function
+                recoder_data data = {0};
+                Load_Recoder(&data);
+                data.can_id = can_id;
+                Save_Recoder(data);
                 printf("RTT CLI: CAN ID set completed.\n");
             } else {
                 printf("RTT CLI: Error! CAN ID format should be 0xXXX (hexadecimal).\n");
             }
             break;
         }
-            
+
+        case CMD_CAN_GET:
+        {
+            recoder_data data = {0};
+            Load_Recoder(&data);
+            printf("RTT CLI: CAN ID: 0x%X (%u)\n", data.can_id, data.can_id);
+            break;
+        }
+        
         case CMD_Q_SET: {
             printf("RTT CLI: Parsing Q15 set command...\n");
             char *param_start = strstr(original_line, "q set");
@@ -228,7 +247,7 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
                 printf("  Corresponding percentage: %.2f%%\n", percent_val);
                 printf("  Corresponding float: %f\n", float_val);
                 
-                // TODO: Call your Q15 value set function
+                foc_set_target(0,q15_val,0);
             } else {
                 printf("RTT CLI: Value parse failed!\n");
                 printf("  Valid formats:\n");
@@ -331,8 +350,10 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
             strncpy(params_copy, original_line, sizeof(params_copy)-1);
             params_copy[sizeof(params_copy)-1] = '\0';
             
-            // 命令格式: speed pid target set angle
-            char *token = strtok(params_copy, " ");
+            char *token;
+            
+            // 跳过 "speed"
+            token = strtok(params_copy, " ");
             if (token == NULL || strcmp(token, "speed") != 0) {
                 printf("RTT CLI: Command format error.\n");
                 break;
@@ -359,31 +380,47 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
                 break;
             }
             
-            // 解析角度参数
+            // 解析rad/s参数
             token = strtok(NULL, " ");
             if (token == NULL) {
-                printf("RTT CLI: Missing angle parameter. Format: speed pid target set angle\n");
-                printf("  Example: speed pid target set 360  # 360 deg/sec\n");
+                printf("RTT CLI: Missing rad/s parameter. Format: speed pid target set rad_s_value\n");
+                printf("  Example: speed pid target set 6283  # 6283 rad/s\n");
                 break;
             }
             
-            int32_t target;
-            if (parse_angle_to_rad_x1000(token, &target) == 0) {
-                const float pi = 3.14159265358979323846f;
-                float angle_deg = (target / 1000.0f) * 180.0f / pi;
-                
-                printf("RTT CLI: Setting speed target:\n");
-                printf("  Input angle: %s deg/sec\n", token);
-                printf("  Converted angle: %.2f deg/sec\n", angle_deg);
-                printf("  Target value: %d (rad*1000)\n", target);
-                
-                foc_speed_pid_set_target(target);
-                printf("RTT CLI: Speed target set completed.\n");
-            } else {
-                printf("RTT CLI: Angle parameter parse failed!\n");
-                printf("  Format: speed pid target set angle\n");
-                printf("  Example: speed pid target set 360  # 360 deg/sec\n");
+            char *endptr;
+            // 解析整数值
+            long target = strtol(token, &endptr, 10);
+            
+            if (*endptr != '\0' && *endptr != ' ' && *endptr != '\r' && *endptr != '\n') {
+                printf("RTT CLI: Invalid integer value!\n");
+                printf("  Format: speed pid target set rad_s_value\n");
+                printf("  Example: speed pid target set 6283  # 6283 rad/s\n");
+                break;
             }
+            
+            // 检查是否溢出
+            if (target < INT32_MIN || target > INT32_MAX) {
+                printf("RTT CLI: Value out of range! Must be between %d and %d\n", INT32_MIN, INT32_MAX);
+                break;
+            }
+            
+            printf("RTT CLI: Setting speed target:\n");
+            printf("  Target value: %ld rad/s\n", target);
+            
+            foc_speed_pid_set_target((int32_t)target);
+            printf("RTT CLI: Speed target set completed.\n");
+            break;
+        }
+        
+        case CMD_SPEED_PID_GET_TARGET: {
+            printf("RTT CLI: Reading current speed PID target...\n");
+            
+            int32_t target;
+            foc_speed_pid_get_target(&target);
+            
+            printf("Current speed PID target:\n");
+            printf("  Value: %d rad/s\n", target);
             break;
         }
         
@@ -399,29 +436,6 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
             printf("  I_out_max = %d (0x%04X)\n", (int)i_out_max, (uint16_t)i_out_max);
             printf("  Out_max = %d (0x%04X)\n", (int)out_max, (uint16_t)out_max);
             printf("  Valid range: 0 - %d (0x%04X)\n", OUT_MAX, OUT_MAX);
-            break;
-        }
-        
-        case CMD_SPEED_PID_GET_TARGET: {
-            printf("RTT CLI: Reading current speed PID target...\n");
-            
-            int32_t target;
-            foc_speed_pid_get_target(&target);
-            
-            const float pi = 3.14159265358979323846f;
-            float angle_deg = (target / 1000.0f) * 180.0f / pi;
-            float rad = target / 1000.0f;
-            
-            printf("Current speed PID target:\n");
-            printf("  Target value = %d (rad*1000)\n", target);
-            printf("  Corresponding radians = %.4f rad\n", rad);
-            printf("  Corresponding angle = %.2f deg/sec\n", angle_deg);
-            
-            printf("  Reference values:\n");
-            printf("    360 deg/sec = 6283\n");
-            printf("    180 deg/sec = 3142\n");
-            printf("    90 deg/sec = 1571\n");
-            printf("    0 deg/sec = 0\n");
             break;
         }
             

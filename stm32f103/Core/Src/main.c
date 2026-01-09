@@ -113,12 +113,8 @@ int main(void)
   {
 //    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
       
-    //定时器触发1khz角度异步采样
-    if(foc_updata_angle())
-    {
-        foc_speed_pid_ctrl();
-    }
-
+    //定时器触发
+    foc_updata();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

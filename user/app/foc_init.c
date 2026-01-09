@@ -14,7 +14,7 @@
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 
-
+uint8_t updata_flag = 0;
 
 
 static void GPIO_Init(void);
@@ -77,19 +77,21 @@ void foc_root_init(void)
         printf("zero angle saved: %d\n", data.calibration_angle);
     }
 
-//    foc_speed_time_init(&foc);
-
     HAL_TIM_Base_Start_IT(&htim2);    
 }
 
-int32_t foc_updata_angle(void)
+int32_t foc_updata(void)
 {
-    if(foc_get_angle_update_flag(&foc))
+    if(updata_flag)
     {
         foc_sensor_updata(&foc);
+        foc_control(&foc);  
+        foc_speed_pid_ctrl();
+
+        updata_flag = 0;
+        
         return 1;
     }
-
     return 0;
 }
 
@@ -156,7 +158,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             led_cnt = 0;
         }        
         
-        foc_control(&foc);   
+         updata_flag = 1;
     }
 }
 
