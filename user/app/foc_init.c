@@ -77,16 +77,17 @@ void foc_root_init(void)
         printf("zero angle saved: %d\n", data.calibration_angle);
     }
 
-    foc_speed_time_init(&foc);
+//    foc_speed_time_init(&foc);
 
     HAL_TIM_Base_Start_IT(&htim2);    
 }
 
-int32_t foc_get_angle(void)
+int32_t foc_updata_angle(void)
 {
     if(foc_get_angle_update_flag(&foc))
     {
-        return foc_sensor_updata(&foc);
+        foc_sensor_updata(&foc);
+        return 1;
     }
 
     return 0;
@@ -180,8 +181,41 @@ static void GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
+// speed pid
 
+#include "foc/foc_math.h"
 
+foc_pid_t speed_pid = {0};
 
+void foc_speed_pid_ctrl(void)
+{
+    int32_t out = 0;
+    
+    foc_percent_update(&speed_pid, foc_get_speed(&foc));
+    out = foc_pid_ctrl(&speed_pid);
+    foc_set_target(0,out,0);
+}
 
+void foc_speed_pid_set_param(float p, float i, float i_out_max, float out_max)
+{
+    foc_set_pid_param(&speed_pid, p, i, 0, i_out_max, out_max);
+}
+
+void foc_speed_pid_get_param(float *p, float *i, float *i_out_max, float *out_max)
+{
+    *p = speed_pid.p;
+    *i = speed_pid.i;
+    *i_out_max = speed_pid.i_out_max;
+    *out_max = speed_pid.out_max;
+}
+
+void foc_speed_pid_set_target(int32_t target)
+{
+    foc_set_pid_target(&speed_pid, target);
+}
+
+void foc_speed_pid_get_target(int32_t *target)
+{
+    *target = (int32_t)speed_pid.target;
+}
 

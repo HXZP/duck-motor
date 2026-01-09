@@ -6,28 +6,28 @@
 
 typedef struct 
 {
-
+	float target;
+	float percent; 
+        
 	float p;
 	float i;
 	float d;
-	
-	float i_acc;
-	
 	float i_out_max;
-	float out_max;
+	float out_max;	
 
+	float err;
+	float err_deta;    
+    
+	float i_acc;
 	float i_out;
 	float out;
-	
-	float target;
-	float percent;
-	float err;
-	float err_deta;
+
 }foc_pid_t;
 
-
-
-float foc_pi_ctrl(foc_pid_t *pid);
+float foc_pid_ctrl(foc_pid_t *pid);
+void foc_set_pid_param(foc_pid_t *pid, float p, float i, float d, float i_out_max, float out_max);
+void foc_set_pid_target(foc_pid_t *pid, float target);
+void foc_percent_update(foc_pid_t *pid, float percent);
 
 
 

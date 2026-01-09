@@ -822,24 +822,19 @@
           <GroupName>User/app</GroupName>
           <Files>
             <File>
-              <FileName>as5600.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\user\app\as5600.c</FilePath>
-            </File>
-            <File>
               <FileName>foc_init.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\user\app\foc_init.c</FilePath>
             </File>
             <File>
+              <FileName>as5600.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\as5600.c</FilePath>
+            </File>
+            <File>
               <FileName>log.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\user\app\log.c</FilePath>
-            </File>
-            <File>
-              <FileName>protocol.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\..\user\app\protocol.c</FilePath>
             </File>
             <File>
               <FileName>soft_iic.c</FileName>
@@ -850,6 +845,11 @@
               <FileName>flash.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\user\app\flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>can_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\user\app\can_protocol.c</FilePath>
             </File>
             <File>
               <FileName>rtt_protocol.c</FileName>

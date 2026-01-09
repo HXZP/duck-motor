@@ -23,7 +23,7 @@
 #define INF_SQRT_3 10000/17321  //√3约等于1.7321，放大10000倍防止浮点运算
 
 #define OUT_MAX_BIT (15)
-#define OUT_MAX (1<<OUT_MAX_BIT)
+#define OUT_MAX ((1 << OUT_MAX_BIT) - 1)
 
 
 typedef enum{
@@ -130,10 +130,12 @@ typedef struct{
     int32_t elec_angle;
     int32_t mech_angle;
 	
-    int32_t elec_angle360;
-    int32_t mech_angle360;	
-	int32_t mech_angle360_pre;
-	int32_t mech_velocity_rpm;
+    int32_t angle;
+    
+//    int32_t elec_angle360;
+//    int32_t mech_angle360;	
+//	int32_t mech_angle360_pre;
+//	int32_t mech_velocity_rpm;
 }foc_angle_t;
 
 typedef struct{
@@ -143,9 +145,9 @@ typedef struct{
     int32_t last_mech_angle;  
     int32_t mech_angle_diff;  
     
-    uint32_t now_time;    
-    uint32_t last_time;
-    uint32_t time_diff;
+//    uint32_t now_time;    
+//    uint32_t last_time;
+//    uint32_t time_diff;
     
     int32_t speed;
     
@@ -196,8 +198,8 @@ typedef struct{
     foc_vector_percent_t vector_percent;
     foc_pwm_duty_t       pwm_duty;
 
-    foc_angle_t  angle;
-    foc_speed_t  speed;
+    foc_angle_t  angle;//弧度x1000
+    foc_speed_t  speed;//弧度/s
     
     foc_park_t         target_park;
 
@@ -224,10 +226,11 @@ void foc_control(foc_t *foc);
 int32_t foc_zero_reset(foc_t *foc);
 void foc_zero_reset_manual(foc_t *foc, int32_t angle);
 void foc_adc_offset_get(foc_t *foc, uint16_t* ch1, uint16_t*ch2);
-void foc_speed_time_init(foc_t *foc);
 
 uint8_t foc_get_angle_update_flag(foc_t *foc);
 
+int32_t foc_get_angle(foc_t *foc);
+int32_t foc_get_speed(foc_t *foc);
 
 
 #endif /* __FOC_CORE_H */

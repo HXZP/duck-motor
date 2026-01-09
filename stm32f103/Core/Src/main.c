@@ -51,8 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-foc_pid_t speed_pid = {0};
-extern foc_t foc;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -115,7 +114,10 @@ int main(void)
 //    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
       
     //定时器触发1khz角度异步采样
-    foc_get_angle();  
+    if(foc_updata_angle())
+    {
+        foc_speed_pid_ctrl();
+    }
 
     /* USER CODE END WHILE */
 
