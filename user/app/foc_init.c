@@ -82,12 +82,19 @@ void foc_root_init(void)
 
 int32_t foc_updata(void)
 {
+    static uint8_t flag = 0;
     if(updata_flag)
     {
-        foc_sensor_updata(&foc);
+        flag = !flag;
+        
+        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+        if(flag)
+        {
+            foc_sensor_updata(&foc);
+        }
         foc_control(&foc);  
         foc_speed_pid_ctrl();
-
+        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
         updata_flag = 0;
         
         return 1;
