@@ -380,16 +380,32 @@ int32_t foc_sensor_updata(foc_t *foc)
     foc->angle.mech_angle = foc_angle_cycle(foc->angle.sensor_angle - foc->angle.zero_angle);
     foc->angle.elec_angle = foc->angle.mech_angle * foc->info.pole_pairs;
 	foc->park.theta = foc->angle.elec_angle;//angle_normalize(foc->angle.elec_angle);
+    foc->angle.angle = foc->angle.mech_angle;
 
+    
+//    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
+    return foc->angle.sensor_angle;
+}
+
+int32_t foc_speed_updata(foc_t *foc)
+{
 //    foc->speed.last_time = foc->speed.now_time;
 //    foc->speed.now_time = foc->cfg->get_time();
 //    foc->speed.time_diff = foc->speed.now_time - foc->speed.last_time;
+    static uint8_t first = 0;
     
     foc->speed.last_mech_angle = foc->speed.mech_angle;
-    foc->speed.mech_angle = foc->angle.mech_angle;
+    foc->speed.mech_angle = foc->angle.angle;
+    
+    if(first == 0)
+    {
+        first = 1;
+        foc->speed.speed = 0;
+        return foc->speed.speed;
+    }
     
     int32_t angle_err;
-    angle_err = (foc->angle.mech_angle - foc->speed.last_mech_angle);
+    angle_err = (foc->speed.mech_angle - foc->speed.last_mech_angle);
     if(angle_err > FOC_PIx1000)
     {
         angle_err -= 2*FOC_PIx1000;
@@ -399,13 +415,12 @@ int32_t foc_sensor_updata(foc_t *foc)
         angle_err += 2*FOC_PIx1000;
     }
     foc->speed.mech_angle_diff = angle_err;
-    
-    foc->angle.angle = foc->angle.mech_angle;
+
     foc->speed.speed = foc->speed.mech_angle_diff;
-    
-//    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
-    return foc->angle.sensor_angle;
+
+    return foc->speed.speed;
 }
+
 
 int32_t foc_get_angle(foc_t *foc)
 {
@@ -490,4 +505,12 @@ uint8_t foc_get_angle_update_flag(foc_t *foc)
     }
     
     return 0;
+}
+
+void foc_set_state(foc_t *foc, foc_state_e state)
+{
+    if(foc->state != Foc_Zero_Angle_Init)
+    {
+        foc->state = state;
+    }
 }

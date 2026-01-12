@@ -1,8 +1,11 @@
 #include "foc_init.h"
 #include "foc/foc_core.h"
+#include "foc/foc_math.h"
+
 #include "as5600.h"
 #include "flash.h"
 #include "log.h"
+#include "can.h"
 
 #include "stm32f1xx_hal.h"          // HAL库核心头文件
 #include "stm32f1xx_hal_tim.h"      // 定时器HAL库
@@ -50,6 +53,74 @@ int32_t foc_zero_angle_reset(void)
     return foc_zero_reset(&foc);
 }
 
+foc_pid_t angle_pid = {
+
+    .out_max = 100
+};
+
+foc_pid_t speed_pid = {0};
+
+int32_t foc_updata(void)
+{
+    static uint16_t flag_250us = 0;
+    if(updata_flag)
+    {
+        flag_250us++;
+        
+        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
+
+        if(!(flag_250us%2))//500us
+        {
+            foc_sensor_updata(&foc);
+            
+        }        
+        
+        if(!(flag_250us%40))//10ms
+        {
+            CAN_TxHeaderTypeDef TxHeader;
+            
+            uint32_t angle = foc_get_angle(&foc);
+            uint32_t speed = foc_get_speed(&foc);
+            
+            uint8_t TxData[3] = {angle&0xFF, (angle>>8)&0xFF, speed}; // 发送的数据
+            uint32_t TxMailbox; // 用于返回使用的发送邮箱
+            
+            // 配置发送报文头
+            TxHeader.StdId = 0x110;       // 标准标识符
+            TxHeader.ExtId = 0x00;        // 扩展标识符 (标准帧时通常为0)
+            TxHeader.IDE = CAN_ID_STD;    // 使用标准帧
+            TxHeader.RTR = CAN_RTR_DATA;  // 数据帧
+            TxHeader.DLC = 3;             // 数据长度 (0-8字节)  
+            HAL_CAN_AddTxMessage(&hcan, &TxHeader, TxData, &TxMailbox);
+            
+            foc_speed_updata(&foc);
+        }
+        
+        if(!(flag_250us%40))//10ms
+        {  
+//            float out = 0;
+//            foc_percent_update(&angle_pid, foc_get_angle(&foc));
+//            out = pid_angle_ctrl(&angle_pid);
+//            foc_speed_pid_set_target(out);
+        }
+        
+        int32_t out = 0;
+        foc_percent_update(&speed_pid, foc_get_speed(&foc));
+        out = pid_speed_ctrl(&speed_pid);
+        foc_set_target(0,out,0); 
+        
+        foc_control(&foc);  
+
+        if(flag_250us == 40*1600)flag_250us = 0;
+        
+        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
+        
+        updata_flag = 0;
+        
+        return 1;
+    }
+    return 0;
+}
 
 void foc_root_init(void)
 {
@@ -80,27 +151,7 @@ void foc_root_init(void)
     HAL_TIM_Base_Start_IT(&htim2);    
 }
 
-int32_t foc_updata(void)
-{
-    static uint8_t flag = 0;
-    if(updata_flag)
-    {
-        flag = !flag;
-        
-        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-        if(flag)
-        {
-            foc_sensor_updata(&foc);
-        }
-        foc_control(&foc);  
-        foc_speed_pid_ctrl();
-        //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-        updata_flag = 0;
-        
-        return 1;
-    }
-    return 0;
-}
+
 
 void foc_set_target(int32_t _d, int32_t _q, int32_t _theta)
 {
@@ -192,22 +243,24 @@ static void GPIO_Init(void)
 
 // speed pid
 
-#include "foc/foc_math.h"
 
-foc_pid_t speed_pid = {0};
 
 void foc_speed_pid_ctrl(void)
 {
-    int32_t out = 0;
+
     
-    foc_percent_update(&speed_pid, foc_get_speed(&foc));
-    out = foc_pid_ctrl(&speed_pid);
-    foc_set_target(0,out,0);
+
 }
 
 void foc_speed_pid_set_param(float p, float i, float i_out_max, float out_max)
 {
-    foc_set_pid_param(&speed_pid, p, i, 0, i_out_max, out_max);
+    if(i_out_max > OUT_MAX)
+        i_out_max = OUT_MAX;
+    
+    if(out_max > OUT_MAX)
+        out_max = OUT_MAX;
+    
+    pid_set_param(&speed_pid, p, i, 0, i_out_max, out_max);
 }
 
 void foc_speed_pid_get_param(float *p, float *i, float *i_out_max, float *out_max)
@@ -218,13 +271,13 @@ void foc_speed_pid_get_param(float *p, float *i, float *i_out_max, float *out_ma
     *out_max = speed_pid.out_max;
 }
 
-void foc_speed_pid_set_target(int32_t target)
+void foc_speed_pid_set_target(float target)
 {
-    foc_set_pid_target(&speed_pid, target);
+    pid_set_target(&speed_pid, target);
 }
 
-void foc_speed_pid_get_target(int32_t *target)
+void foc_speed_pid_get_target(float *target)
 {
-    *target = (int32_t)speed_pid.target;
+    *target = speed_pid.target;
 }
 

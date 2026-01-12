@@ -57,7 +57,7 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+uint32_t q_set;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -70,7 +70,7 @@ void SystemClock_Config(void);
   * @retval int
   */
 int main(void)
-{
+           {
 
   /* USER CODE BEGIN 1 */
 

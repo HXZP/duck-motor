@@ -220,8 +220,10 @@ typedef struct{
 
 
 void foc_init(foc_t *foc, const foc_cfg_t *cfg);
+void foc_set_state(foc_t *foc, foc_state_e state);
 void foc_target_updata(foc_t *foc, foc_park_t target);
 int32_t foc_sensor_updata(foc_t *foc);
+int32_t foc_speed_updata(foc_t *foc);
 void foc_control(foc_t *foc);
 int32_t foc_zero_reset(foc_t *foc);
 void foc_zero_reset_manual(foc_t *foc, int32_t angle);

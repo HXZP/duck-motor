@@ -12,6 +12,7 @@ typedef struct
 	float p;
 	float i;
 	float d;
+    float i_acc_max;
 	float i_out_max;
 	float out_max;	
 
@@ -19,14 +20,17 @@ typedef struct
 	float err_deta;    
     
 	float i_acc;
+    
 	float i_out;
 	float out;
 
 }foc_pid_t;
 
-float foc_pid_ctrl(foc_pid_t *pid);
-void foc_set_pid_param(foc_pid_t *pid, float p, float i, float d, float i_out_max, float out_max);
-void foc_set_pid_target(foc_pid_t *pid, float target);
+float pid_angle_ctrl(foc_pid_t *pid);
+float pid_speed_ctrl(foc_pid_t *pid);
+
+void pid_set_param(foc_pid_t *pid, float p, float i, float d, float i_out_max, float out_max);
+void pid_set_target(foc_pid_t *pid, float target);
 void foc_percent_update(foc_pid_t *pid, float percent);
 
 

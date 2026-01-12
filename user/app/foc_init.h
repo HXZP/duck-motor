@@ -14,12 +14,12 @@ int32_t foc_zero_angle_reset(void);
 // speed pid
 void foc_speed_pid_ctrl(void);
 void foc_speed_pid_set_param(float p, float i, float i_out_max, float out_max);
-void foc_speed_pid_set_target(int32_t target);
+void foc_speed_pid_set_target(float target);
 void foc_speed_pid_get_param(float *p, float *i, float *i_out_max, float *out_max);
-void foc_speed_pid_get_target(int32_t *target);
+void foc_speed_pid_get_target(float *target);
 
 
-
+extern foc_t foc;
 
 
 

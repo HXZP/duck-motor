@@ -408,7 +408,7 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
             printf("RTT CLI: Setting speed target:\n");
             printf("  Target value: %ld rad/s\n", target);
             
-            foc_speed_pid_set_target((int32_t)target);
+            foc_speed_pid_set_target((float)target);
             printf("RTT CLI: Speed target set completed.\n");
             break;
         }
@@ -416,11 +416,11 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
         case CMD_SPEED_PID_GET_TARGET: {
             printf("RTT CLI: Reading current speed PID target...\n");
             
-            int32_t target;
+            float target;
             foc_speed_pid_get_target(&target);
             
             printf("Current speed PID target:\n");
-            printf("  Value: %d rad/s\n", target);
+            printf("  Value: %d rad/s(x1000)\n", (int32_t)(target*1000));
             break;
         }
         
