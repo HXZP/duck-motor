@@ -55,11 +55,27 @@ int32_t foc_zero_angle_reset(void)
 
 foc_pid_t angle_pid = {
 
-    .out_max = 100
+    .target = 5200,
+    .p = 0.05f,
+    .out_max = 15
 };
 
-foc_pid_t speed_pid = {0};
+foc_pid_t speed_pid = {
 
+    .p = 2500,
+    .i = 1,
+    .i_acc_max = 6000,
+    .out_max = OUT_MAX,
+};
+
+#define EXT_SPEED_LEN 20
+uint16_t angle_recoder[EXT_SPEED_LEN];
+uint8_t angle_idex = 0;
+uint8_t angle_first_idex = 0;
+uint8_t angle_init = 0;
+float speed = 0;
+
+static uint8_t dir = 0;
 int32_t foc_updata(void)
 {
     static uint16_t flag_250us = 0;
@@ -69,10 +85,78 @@ int32_t foc_updata(void)
         
         //HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
 
+        if(!(flag_250us%40))//100ms
+        {  
+            if(dir)angle_pid.target--;
+            else angle_pid.target++;
+            
+            if(angle_pid.target == 5800)
+            {
+                dir = !dir;
+                angle_pid.target--;
+            }
+            else if(angle_pid.target == 4900)
+            {
+                dir = !dir;
+                angle_pid.target++;
+            }
+        }   
+        
+        
         if(!(flag_250us%2))//500us
         {
             foc_sensor_updata(&foc);
             
+            angle_recoder[angle_idex] = foc_get_angle(&foc);
+            
+            if(angle_init == 0)
+            {
+                if(angle_idex == 0)
+                {
+                    speed = 0;
+                }
+                else
+                {
+                    int16_t _speed = angle_recoder[angle_idex] - angle_recoder[0];
+                    if(_speed > FOC_PIx1000)
+                    {
+                        _speed -= 2*FOC_PIx1000;
+                    }
+                    else if(_speed < -FOC_PIx1000)
+                    {
+                        _speed += 2*FOC_PIx1000;
+                    }
+                    
+                    speed = (float)_speed/angle_idex*2;
+                }
+                if(angle_idex == EXT_SPEED_LEN - 2)
+                {
+                    angle_init = 1;
+                }                
+            }
+            else
+            {
+                angle_first_idex = angle_idex + 1;
+                if(angle_first_idex == EXT_SPEED_LEN)angle_first_idex = 0;
+                
+                int16_t _speed = angle_recoder[angle_idex] - angle_recoder[angle_first_idex];
+                
+                if(_speed > FOC_PIx1000)
+                {
+                    _speed -= 2*FOC_PIx1000;
+                }
+                else if(_speed < -FOC_PIx1000)
+                {
+                    _speed += 2*FOC_PIx1000;
+                }
+                
+                speed = (float)_speed/EXT_SPEED_LEN*2;
+            }
+            angle_idex++;
+            if(angle_idex == EXT_SPEED_LEN)
+            {
+                angle_idex = 0;
+            }
         }        
         
         if(!(flag_250us%40))//10ms
@@ -98,14 +182,16 @@ int32_t foc_updata(void)
         
         if(!(flag_250us%40))//10ms
         {  
-//            float out = 0;
-//            foc_percent_update(&angle_pid, foc_get_angle(&foc));
-//            out = pid_angle_ctrl(&angle_pid);
-//            foc_speed_pid_set_target(out);
+            float out = 0;
+            foc_percent_update(&angle_pid, foc_get_angle(&foc));
+            out = pid_angle_ctrl(&angle_pid);
+            foc_speed_pid_set_target(out);
         }
+
+
         
         int32_t out = 0;
-        foc_percent_update(&speed_pid, foc_get_speed(&foc));
+        foc_percent_update(&speed_pid, speed);//foc_get_speed(&foc)
         out = pid_speed_ctrl(&speed_pid);
         foc_set_target(0,out,0); 
         
@@ -263,11 +349,11 @@ void foc_speed_pid_set_param(float p, float i, float i_out_max, float out_max)
     pid_set_param(&speed_pid, p, i, 0, i_out_max, out_max);
 }
 
-void foc_speed_pid_get_param(float *p, float *i, float *i_out_max, float *out_max)
+void foc_speed_pid_get_param(float *p, float *i, float *i_acc_max, float *out_max)
 {
     *p = speed_pid.p;
     *i = speed_pid.i;
-    *i_out_max = speed_pid.i_out_max;
+    *i_acc_max = speed_pid.i_acc_max;
     *out_max = speed_pid.out_max;
 }
 
