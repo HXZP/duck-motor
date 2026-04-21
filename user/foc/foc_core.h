@@ -19,8 +19,11 @@
 */
 #define FOC_PI (3141/1000)
 #define FOC_PIx1000 (3141)
-#define SQRT_3 17321/10000  //√3约等于1.7321，放大10000倍防止浮点运算
-#define INF_SQRT_3 10000/17321  //√3约等于1.7321，放大10000倍防止浮点运算
+
+#define FOC_Q15_SHIFT (15)
+#define FOC_ONE_DIV_THREE_Q15 (10923)  // (1/3) * 2^15
+#define FOC_SQRT_3_Q15 (56756)         // sqrt(3) * 2^15
+#define FOC_INV_SQRT_3_Q15 (18919)     // (1/sqrt(3)) * 2^15
 
 #define OUT_MAX_BIT (15)
 #define OUT_MAX ((1 << OUT_MAX_BIT) - 1)

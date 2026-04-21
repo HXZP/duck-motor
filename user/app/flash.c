@@ -19,9 +19,28 @@ uint32_t Calculate_CRC32(uint32_t* data, uint32_t len) {
     return CRC->DR;
 }
 
+/**
+ * @brief 获取参数记录的默认值。
+ * @return recoder_data 默认参数记录。
+ */
+static recoder_data Recoder_Get_Default(void) {
+    recoder_data data = {
+        .calibration_angle = RECODER_DEFAULT_CALIBRATION_ANGLE,
+        .can_id = RECODER_DEFAULT_CAN_ID
+    };
+
+    return data;
+}
+
 uint8_t Load_Recoder(recoder_data* data) {
     MotorCalibrationData _data;
     uint32_t* src = (uint32_t*)FLASH_USER_ADDR;
+
+    if (data == NULL) {
+        return 0;
+    }
+
+    *data = Recoder_Get_Default();
     
     // 1. 读取Flash数据
     memcpy(&_data, src, sizeof(MotorCalibrationData));

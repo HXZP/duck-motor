@@ -200,6 +200,11 @@ int32_t cos_int16(int32_t angle_x1000) {
     return sin_int16(new_angle % TWOPI_X1000);
 }
 
+static int32_t foc_q15_mul(int32_t value, int32_t q15_factor)
+{
+    return (int32_t)(((int64_t)value * q15_factor) >> FOC_Q15_SHIFT);
+}
+
 
 /*
     **  @brief  基本模型
@@ -210,8 +215,10 @@ int32_t cos_int16(int32_t angle_x1000) {
 */
 void foc_clarke(foc_clarke_t *clarke, const foc_phase_volage_t *phase_volage)
 {
-    clarke->alpha = ((phase_volage->a - phase_volage->b - phase_volage->c)>>1)/3;
-    clarke->beta = (phase_volage->b - phase_volage->c)*INF_SQRT_3;
+    int32_t alpha_raw = (phase_volage->a - phase_volage->b - phase_volage->c) >> 1;
+
+    clarke->alpha = foc_q15_mul(alpha_raw, FOC_ONE_DIV_THREE_Q15);
+    clarke->beta = foc_q15_mul(phase_volage->b - phase_volage->c, FOC_INV_SQRT_3_Q15);
 }
 /*
     **  @brief  Park变换
@@ -229,8 +236,8 @@ void foc_park(foc_park_t *park, const foc_clarke_t *clarke)
 void foc_reclarke(foc_phase_volage_t *phase_volage, const foc_clarke_t *clarke)
 {
     phase_volage->a = clarke->alpha;
-    phase_volage->b = (-clarke->alpha + clarke->beta * SQRT_3)>>1;
-    phase_volage->c = (-clarke->alpha - clarke->beta * SQRT_3)>>1;
+    phase_volage->b = (-clarke->alpha + foc_q15_mul(clarke->beta, FOC_SQRT_3_Q15)) >> 1;
+    phase_volage->c = (-clarke->alpha - foc_q15_mul(clarke->beta, FOC_SQRT_3_Q15)) >> 1;
 }
 /*
     **  @brief  反Park变换
@@ -252,8 +259,8 @@ void foc_repark(foc_clarke_t *clarke, const foc_park_t *park)
 void foc_get_sector(foc_sector_t *sector, const foc_clarke_t *clarke)
 {
 	sector->A = (clarke->beta > 0)?1:0;
-	sector->B = (SQRT_3 * clarke->alpha - clarke->beta > 0)?1:0;
-	sector->C = (-SQRT_3 * clarke->alpha - clarke->beta > 0)?1:0;
+	sector->B = (foc_q15_mul(clarke->alpha, FOC_SQRT_3_Q15) - clarke->beta > 0)?1:0;
+	sector->C = (-foc_q15_mul(clarke->alpha, FOC_SQRT_3_Q15) - clarke->beta > 0)?1:0;
 	
     sector->N = (sector->C << 2) + (sector->B << 1) + sector->A;
     sector->value = N2sector[sector->N - 1];
@@ -262,8 +269,8 @@ void foc_get_sector(foc_sector_t *sector, const foc_clarke_t *clarke)
 void foc_get_vector_percent(foc_vector_percent_t *vector_percent, const float vector_voltage, const foc_clarke_t *clarke)
 {
     vector_percent->X = clarke->beta;
-    vector_percent->Y = (clarke->alpha * SQRT_3 + clarke->beta)>>1;
-    vector_percent->Z = (-clarke->alpha * SQRT_3 + clarke->beta)>>1;
+    vector_percent->Y = (foc_q15_mul(clarke->alpha, FOC_SQRT_3_Q15) + clarke->beta) >> 1;
+    vector_percent->Z = (-foc_q15_mul(clarke->alpha, FOC_SQRT_3_Q15) + clarke->beta) >> 1;
 }
 
 void foc_get_vector_normalize(foc_output_vector_t *vector, const foc_vector_percent_t *vector_percent, const foc_sector_t *sector)
@@ -365,7 +372,7 @@ int32_t foc_angle_cycle(int32_t angle)
 void foc_init(foc_t *foc, const foc_cfg_t *cfg)
 {
     foc->info.master_voltage = cfg->master_voltage;
-    foc->info.vector_voltage = OUT_MAX;//foc->info.master_voltage/SQRT_3;
+    foc->info.vector_voltage = OUT_MAX;//foc->info.master_voltage/sqrt(3);
 	
     foc->info.pole_pairs = cfg->pole_pairs;
     foc->pwm_duty.T = cfg->pwm_period;

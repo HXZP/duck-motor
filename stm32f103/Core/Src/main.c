@@ -28,9 +28,9 @@
 #include "app/soft_iic.h"
 #include "app/as5600.h"
 #include "app/foc_init.h"
+#include "app/can_protocol.h"
 #include "foc/foc_core.h"
 #include "foc/foc_math.h"
-#include "app/rtt_protocol.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -70,7 +70,7 @@ uint32_t q_set;
   * @retval int
   */
 int main(void)
-           {
+{
 
   /* USER CODE BEGIN 1 */
 
@@ -99,6 +99,7 @@ int main(void)
   MX_CAN_Init();
   /* USER CODE BEGIN 2 */
   log_init();
+  can_protocol_init();
   I2C_Init();
   as5600Init();
   foc_root_init();
@@ -115,11 +116,10 @@ int main(void)
       
     //定时器触发
     foc_updata();
+    can_protocol_process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    process_rtt_commands();
-      
       
   }
   /* USER CODE END 3 */

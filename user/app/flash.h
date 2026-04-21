@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "stm32f1xx_hal.h"
 
+#define RECODER_DEFAULT_CALIBRATION_ANGLE (0)
+#define RECODER_DEFAULT_CAN_ID            (0x10U)
+
 typedef struct {
     int32_t calibration_angle; // 校准角度
     uint32_t can_id; //can的id号
