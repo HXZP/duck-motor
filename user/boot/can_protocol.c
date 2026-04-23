@@ -1,6 +1,4 @@
-#include "app/can_protocol.h"
-#include "app/flash.h"
-#include "app/foc_init.h"
+#include "boot/can_protocol.h"
 #include <string.h>
 
 #define CAN_PROTOCOL_RX_QUEUE_LENGTH (8U)

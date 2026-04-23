@@ -1,0 +1,95 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "hidden": true,
+            "generator": "MinGW Makefiles",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "BUILD_BOOT": "OFF",
+                "BUILD_APP": "ON"
+            }
+        },
+        {
+            "name": "Debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_BOOT": "OFF",
+                "BUILD_APP": "ON"
+            }
+        },
+        {
+            "name": "Release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_BOOT": "OFF",
+                "BUILD_APP": "ON"
+            }
+        },
+        {
+            "name": "boot-debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_BOOT": "ON",
+                "BUILD_APP": "OFF"
+            }
+        },
+        {
+            "name": "boot-release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_BOOT": "ON",
+                "BUILD_APP": "OFF"
+            }
+        },
+        {
+            "name": "full-debug",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BUILD_BOOT": "ON",
+                "BUILD_APP": "ON"
+            }
+        },
+        {
+            "name": "full-release",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_BOOT": "ON",
+                "BUILD_APP": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Debug",
+            "configurePreset": "Debug"
+        },
+        {
+            "name": "Release",
+            "configurePreset": "Release"
+        },
+        {
+            "name": "boot-debug",
+            "configurePreset": "boot-debug"
+        },
+        {
+            "name": "boot-release",
+            "configurePreset": "boot-release"
+        },
+        {
+            "name": "full-debug",
+            "configurePreset": "full-debug"
+        },
+        {
+            "name": "full-release",
+            "configurePreset": "full-release"
+        }
+    ]
+}
