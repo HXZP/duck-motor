@@ -614,6 +614,29 @@ void can_protocol_process(void)
  * @param rx_data 接收到的数据区指针。
  * @return void
  */
+/**
+ * @brief 判断当前是否存在待处理的 CAN 协议数据。
+ * @return int 存在待处理数据返回 1，否则返回 0。
+ */
+/**
+ * @brief 判断当前是否存在待处理的 CAN 协议数据。
+ * @return int 存在待处理数据返回 1，否则返回 0。
+ */
+int can_protocol_has_pending(void)
+{
+    if (can_protocol_rx_read_index != can_protocol_rx_write_index)
+    {
+        return 1;
+    }
+
+    if (can_protocol_rx_overflow_flag != 0U)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
 void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
 {
     uint8_t ack_payload[6] = {0};

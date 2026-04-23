@@ -24,6 +24,7 @@ set(MEMORY_REPORT_SCRIPT "${REPO_ROOT}/scripts/print_memory_report.py")
 add_subdirectory(cmake/stm32cubemx)
 
 add_subdirectory("${REPO_ROOT}/user/rtt" "${CMAKE_BINARY_DIR}/user_rtt")
+add_subdirectory("${REPO_ROOT}/user/kernel" "${CMAKE_BINARY_DIR}/user_kernel")
 add_subdirectory("${REPO_ROOT}/user/foc" "${CMAKE_BINARY_DIR}/user_foc")
 add_subdirectory("${REPO_ROOT}/user/app" "${CMAKE_BINARY_DIR}/user_app")
 

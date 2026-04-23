@@ -24,13 +24,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "app/log.h"
-#include "app/soft_iic.h"
-#include "app/as5600.h"
-#include "app/foc_init.h"
-#include "app/can_protocol.h"
-#include "foc/foc_core.h"
-#include "foc/foc_math.h"
+#include <stdio.h>
+#include "app/user_main.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -57,7 +52,6 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-uint32_t q_set;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -98,14 +92,7 @@ int main(void)
   MX_TIM2_Init();
   MX_CAN_Init();
   /* USER CODE BEGIN 2 */
-  log_init();
-  can_protocol_init();
-  I2C_Init();
-  as5600Init();
-  foc_root_init();
-  
-//  foc_set_target(0,-(1<<12),0);
-
+  User_Main();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -115,8 +102,6 @@ int main(void)
 //    foc_set_target(0,q_set,0);//功率13.7W电流1.14A  
       
     //定时器触发
-    foc_updata();
-    can_protocol_process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

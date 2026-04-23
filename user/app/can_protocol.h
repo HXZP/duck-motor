@@ -55,7 +55,7 @@ void can_protocol_init(void);
 /**
  * @brief 处理一帧接收到的 CAN 协议数据。
  * @param rxframe 接收帧头。
- * @param rx_data 接收到的数据区指针。
+ * @param rx_data 接收到的数据缓冲区指针。
  * @return void
  */
 void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data);
@@ -71,6 +71,12 @@ void can_protocol_report_motor_state(void);
  * @return void
  */
 void can_protocol_process(void);
+
+/**
+ * @brief 判断当前是否存在待处理的 CAN 协议数据。
+ * @return int 存在待处理数据返回 1，否则返回 0。
+ */
+int can_protocol_has_pending(void);
 
 /**
  * @brief 获取当前协议层使用的节点 ID。

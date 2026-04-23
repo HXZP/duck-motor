@@ -24,6 +24,12 @@ void foc_root_init(void);
 int32_t foc_updata(void);
 
 /**
+ * @brief 判断当前是否存在待处理的 FOC 调度请求。
+ * @return int 存在待处理请求返回 1，否则返回 0。
+ */
+int foc_update_is_pending(void);
+
+/**
  * @brief 使能或关闭功率输出。
  * @param enable 输出使能标志，0 表示关闭，非 0 表示使能。
  * @return void

@@ -18,7 +18,7 @@
 extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 
-uint8_t updata_flag = 0;
+volatile uint8_t updata_flag = 0U;
 
 
 static void GPIO_Init(void);
@@ -294,6 +294,24 @@ int32_t foc_updata(void)
  * @brief 初始化 FOC 运行环境。
  * @return void
  */
+/**
+ * @brief 判断当前是否存在待处理的 FOC 调度请求。
+ * @return int 存在待处理请求返回 1，否则返回 0。
+ */
+/**
+ * @brief 判断当前是否存在待处理的 FOC 调度请求。
+ * @return int 存在待处理请求返回 1，否则返回 0。
+ */
+int foc_update_is_pending(void)
+{
+    if (updata_flag != 0U)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
 void foc_root_init(void)
 {
     foc_init(&foc,&cfg);
