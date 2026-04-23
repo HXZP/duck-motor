@@ -19,6 +19,7 @@ enable_language(C ASM)
 add_executable(${CMAKE_PROJECT_NAME})
 
 set(REPO_ROOT "${CMAKE_SOURCE_DIR}/..")
+set(MEMORY_REPORT_SCRIPT "${REPO_ROOT}/scripts/print_memory_report.py")
 
 add_subdirectory(cmake/stm32cubemx)
 
