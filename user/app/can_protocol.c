@@ -43,6 +43,15 @@ static uint16_t can_protocol_get_command_std_id(void)
 }
 
 /**
+ * @brief 获取 OTA 控制帧使用的标准帧 ID。
+ * @return uint16_t OTA 控制标准帧 ID。
+ */
+static uint16_t can_protocol_get_ota_control_std_id(void)
+{
+    return (uint16_t)(CAN_PROTOCOL_OTA_CONTROL_BASE_ID + can_protocol_node_id);
+}
+
+/**
  * @brief 获取电机应答使用的标准帧 ID。
  * @return uint16_t 应答标准帧 ID。
  */
@@ -58,6 +67,40 @@ static uint16_t can_protocol_get_ack_std_id(void)
 static uint16_t can_protocol_get_report_std_id(void)
 {
     return (uint16_t)(CAN_PROTOCOL_MOTOR_REPORT_BASE_ID + can_protocol_node_id);
+}
+
+/**
+ * @brief 判断当前帧是否为 OTA 启动请求。
+ * @param rxframe 接收帧头。
+ * @param rx_data 接收数据缓冲区。
+ * @return uint8_t 是 OTA 启动请求返回 1，否则返回 0。
+ */
+static uint8_t can_protocol_is_ota_start_request(CAN_RxHeaderTypeDef rxframe, const uint8_t *rx_data)
+{
+    if (rx_data == NULL)
+    {
+        return 0U;
+    }
+
+    if (rxframe.DLC < 4U)
+    {
+        return 0U;
+    }
+
+    if ((rx_data[0] != 0x7FU) ||
+        (rx_data[1] != 0x5AU) ||
+        (rx_data[2] != 0xA5U))
+    {
+        return 0U;
+    }
+
+    if ((rx_data[3] == 0x0AU) ||
+        (rx_data[3] == (uint8_t)can_protocol_node_id))
+    {
+        return 1U;
+    }
+
+    return 0U;
 }
 
 /**
@@ -150,6 +193,19 @@ static void can_protocol_send_ack(uint8_t cmd, uint8_t status, const uint8_t *pa
 }
 
 /**
+ * @brief 切换到 Boot OTA 模式。
+ * @param cmd 当前命令码。
+ * @return void
+ */
+static void can_protocol_enter_boot_ota(uint8_t cmd)
+{
+    Save_OtaFlag(USER_INFO_OTA_FLAG_BOOT);
+    can_protocol_send_ack(cmd, CAN_PROTOCOL_STATUS_OK, NULL, 0U);
+    HAL_Delay(10U);
+    NVIC_SystemReset();
+}
+
+/**
  * @brief 将当前节点 ID 保存到 Flash。
  * @param node_id 待保存的节点 ID。
  * @return void
@@ -187,6 +243,7 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
 {
     CAN_FilterTypeDef filter = {0};
     uint16_t command_id = can_protocol_get_command_std_id();
+    uint16_t ota_control_id = can_protocol_get_ota_control_std_id();
 
     (void)HAL_CAN_Stop(&hcan);
 
@@ -201,6 +258,13 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
     filter.FilterActivation = ENABLE;
     filter.SlaveStartFilterBank = 14;
 
+    if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK)
+    {
+        return HAL_ERROR;
+    }
+
+    filter.FilterBank = 1;
+    filter.FilterIdHigh = (uint16_t)(ota_control_id << 5);
     if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK)
     {
         return HAL_ERROR;
@@ -643,7 +707,8 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
     int32_t value = 0;
     uint8_t status = CAN_PROTOCOL_STATUS_OK;
 
-    if (rxframe.StdId != can_protocol_get_command_std_id())
+    if ((rxframe.StdId != can_protocol_get_command_std_id()) &&
+        (rxframe.StdId != can_protocol_get_ota_control_std_id()))
     {
         return;
     }
@@ -651,6 +716,12 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
     if (rxframe.DLC == 0U)
     {
         can_protocol_send_ack(0U, CAN_PROTOCOL_STATUS_INVALID_PARAM, NULL, 0U);
+        return;
+    }
+
+    if (can_protocol_is_ota_start_request(rxframe, rx_data) != 0U)
+    {
+        can_protocol_enter_boot_ota(CAN_PROTOCOL_CMD_ENTER_BOOT_OTA);
         return;
     }
 
@@ -865,6 +936,12 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
             value = foc_get_zero_angle();
             can_protocol_encode_int32(ack_payload, value);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 4U);
+            return;
+        }
+
+        case CAN_PROTOCOL_CMD_ENTER_BOOT_OTA:
+        {
+            can_protocol_enter_boot_ota(rx_data[0]);
             return;
         }
 

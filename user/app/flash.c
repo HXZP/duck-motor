@@ -1,99 +1,103 @@
 #include "app/flash.h"
-#include <string.h>
 
-//#define FLASH_PAGE_SIZE    1024      // F103每页1KB
-#define FLASH_USER_ADDR    0x0800FC00 // 最后一页起始地址（第63页）
-#define DATA_MAGIC         0xA5A5A5A5 // 数据头标志
-
-// 初始化CRC
-void CRC_Init(void) {
-    __HAL_RCC_CRC_CLK_ENABLE();
-}
-
-// 计算数据的CRC32
-uint32_t Calculate_CRC32(uint32_t* data, uint32_t len) {
-    CRC->CR = CRC_CR_RESET;  // 复位CRC计算器
-    for(uint32_t i = 0; i < len; i++) {
-        CRC->DR = data[i];
+/**
+ * @brief 将通用用户信息转换为 App 参数记录。
+ * @param info 通用用户信息。
+ * @param data App 参数记录输出缓冲区。
+ * @return void
+ */
+static void flash_copy_user_info_to_recoder(const user_info_data_t *info, recoder_data *data)
+{
+    if ((info == NULL) || (data == NULL))
+    {
+        return;
     }
-    return CRC->DR;
+
+    data->calibration_angle = info->calibration_angle;
+    data->can_id = info->can_id;
+    data->ota = info->ota;
 }
 
 /**
- * @brief 获取参数记录的默认值。
- * @return recoder_data 默认参数记录。
+ * @brief 将 App 参数记录转换为通用用户信息。
+ * @param data App 参数记录。
+ * @param info 通用用户信息输出缓冲区。
+ * @return void
  */
-static recoder_data Recoder_Get_Default(void) {
-    recoder_data data = {
-        .calibration_angle = RECODER_DEFAULT_CALIBRATION_ANGLE,
-        .can_id = RECODER_DEFAULT_CAN_ID
-    };
+static void flash_copy_recoder_to_user_info(recoder_data data, user_info_data_t *info)
+{
+    if (info == NULL)
+    {
+        return;
+    }
 
-    return data;
+    info->calibration_angle = data.calibration_angle;
+    info->can_id = data.can_id;
+    info->ota = data.ota;
 }
 
-uint8_t Load_Recoder(recoder_data* data) {
-    MotorCalibrationData _data;
-    uint32_t* src = (uint32_t*)FLASH_USER_ADDR;
+/**
+ * @brief 读取 App 参数记录。
+ * @param data App 参数记录输出缓冲区。
+ * @return uint8_t 成功返回 1，失败返回 0。
+ */
+uint8_t Load_Recoder(recoder_data *data)
+{
+    user_info_data_t info;
 
-    if (data == NULL) {
-        return 0;
+    if (data == NULL)
+    {
+        return 0u;
     }
 
-    *data = Recoder_Get_Default();
-    
-    // 1. 读取Flash数据
-    memcpy(&_data, src, sizeof(MotorCalibrationData));
-    
-    // 2. 检查数据头标志
-    if(_data.magic != DATA_MAGIC) {
-        return 0; // 数据无效
+    if (UserInfo_Load(&info) != USER_INFO_OK)
+    {
+        return 0u;
     }
-    
-    // 3. 验证CRC32（仅校验magic和angle字段）
-    uint32_t computed_crc = Calculate_CRC32((uint32_t*)&_data, 2);
-    
-    if(computed_crc == _data.crc32) {
-        *data = _data.data;
-        return 1; // 数据可信
-    }
-    return 0; // 校验失败
+
+    flash_copy_user_info_to_recoder(&info, data);
+    return 1u;
 }
 
-void Save_Recoder(recoder_data data) {
-    MotorCalibrationData _data;
-    uint32_t PageError = 0;
-    
-    // 1. 填充数据结构
-    _data.magic = DATA_MAGIC;
-    _data.data = data;
-    _data.crc32 = Calculate_CRC32((uint32_t*)&data, 2); // 计算前8字节的CRC
-    
-    // 2. 解锁Flash
-    HAL_FLASH_Unlock();
-    
-    // 3. 擦除目标页（必须整页擦除）
-    FLASH_EraseInitTypeDef erase;
-    erase.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase.PageAddress = FLASH_USER_ADDR;
-    erase.NbPages = 1;
-    HAL_FLASHEx_Erase(&erase, &PageError);
-    
-    // 4. 写入数据（按字32位写入）
-    uint32_t* pData = (uint32_t*)&_data;
-    for(uint32_t i = 0; i < sizeof(MotorCalibrationData)/4; i++) {
-        HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, 
-                         FLASH_USER_ADDR + i*4, 
-                         pData[i]);
+/**
+ * @brief 保存 App 参数记录。
+ * @param data 待保存的 App 参数记录。
+ * @return void
+ */
+void Save_Recoder(recoder_data data)
+{
+    user_info_data_t info;
+
+    flash_copy_recoder_to_user_info(data, &info);
+    if ((info.can_id == 0u) || (info.can_id > 0x7Fu))
+    {
+        info.can_id = USER_INFO_DEFAULT_CAN_ID;
     }
-    
-    // 5. 重新锁住Flash
-    HAL_FLASH_Lock();
+
+    UserInfo_Save(&info);
 }
 
+/**
+ * @brief 读取 OTA 标志位。
+ * @param ota_flag OTA 标志位输出缓冲区。
+ * @return uint8_t 成功返回 1，失败返回 0。
+ */
+uint8_t Load_OtaFlag(uint32_t *ota_flag)
+{
+    if (UserInfo_LoadOtaFlag(ota_flag) != USER_INFO_OK)
+    {
+        return 0u;
+    }
 
+    return 1u;
+}
 
-
-
-
-
+/**
+ * @brief 保存 OTA 标志位。
+ * @param ota_flag OTA 标志位。
+ * @return void
+ */
+void Save_OtaFlag(uint32_t ota_flag)
+{
+    UserInfo_SaveOtaFlag(ota_flag);
+}

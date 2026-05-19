@@ -26,6 +26,7 @@
 /* USER CODE BEGIN Includes */
 #include "boot/log.h"
 #include "boot/can_protocol.h"
+#include "boot/ota_process.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -94,6 +95,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   log_init();
   can_protocol_init();
+  OtaProcess_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -101,6 +103,7 @@ int main(void)
   while (1)
   {
     can_protocol_process();
+    OtaProcess_Poll();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

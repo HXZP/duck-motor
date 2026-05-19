@@ -1,6 +1,7 @@
 add_library(user_app STATIC)
 
 target_sources(user_app PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../common/user_info.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/as5600.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/can_protocol.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/flash.c"
