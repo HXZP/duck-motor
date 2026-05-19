@@ -30,6 +30,10 @@ set(MEMORY_REPORT_SCRIPT
     "${CMAKE_SOURCE_DIR}/scripts/print_memory_report.py"
 )
 
+set(PACK_SCRIPT
+    "${CMAKE_SOURCE_DIR}/scripts/pack.py"
+)
+
 if(BUILD_APP)
     ExternalProject_Add(app
         SOURCE_DIR "${APP_SOURCE_DIR}"
@@ -68,6 +72,29 @@ if(BUILD_APP OR BUILD_BOOT)
 
     set(BUILD_REPORT_COMMANDS)
     set(BUILD_REPORT_DEPS)
+    set(PACK_TARGET)
+
+    if(BUILD_BOOT AND BUILD_APP)
+        set(PACK_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/output/full")
+        set(PACK_OUTPUT_BIN "${PACK_OUTPUT_DIR}/full.bin")
+
+        add_custom_target(pack ALL
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${PACK_OUTPUT_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+                ${Python3_EXECUTABLE}
+                ${PACK_SCRIPT}
+                --boot "${CMAKE_SOURCE_DIR}/output/boot/boot.bin"
+                --app "${CMAKE_SOURCE_DIR}/output/motor/motor.bin"
+                --output "${PACK_OUTPUT_BIN}"
+                --app-offset 0x4400
+                --userinfo-offset 0xFC00
+                --boot-limit 0x4400
+            VERBATIM
+        )
+
+        add_dependencies(pack boot app)
+        set(PACK_TARGET pack)
+    endif()
 
     if(BUILD_BOOT)
         list(APPEND BUILD_REPORT_DEPS boot)
@@ -99,6 +126,10 @@ if(BUILD_APP OR BUILD_BOOT)
                 ${CMAKE_SOURCE_DIR}/output/motor/motor.elf
                 ${APP_SOURCE_DIR}/STM32F103XX_FLASH.ld
         )
+    endif()
+
+    if(PACK_TARGET)
+        list(APPEND BUILD_REPORT_DEPS ${PACK_TARGET})
     endif()
 
     if(BUILD_REPORT_COMMANDS)
