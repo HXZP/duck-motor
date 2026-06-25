@@ -1,0 +1,9 @@
+build --enable_platform_specific_config
+build --verbose_failures
+build --action_env=PATH
+build --show_result=20
+build --define=ARM_NONE_EABI_BIN=C:/PROGRA~1/Arm/GNUTOO~1/bin
+build --compilation_mode=opt
+
+build:debug --compilation_mode=dbg
+build:release --compilation_mode=opt

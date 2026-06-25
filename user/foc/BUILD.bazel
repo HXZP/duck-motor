@@ -1,0 +1,14 @@
+load("//bazel/mcu:mcu_rules.bzl", "mcu_library")
+
+package(default_visibility = ["//visibility:public"])
+
+mcu_library(
+    name = "user_foc",
+    srcs = [
+        "foc_core.c",
+        "foc_math.c",
+    ],
+    hdrs = glob(["*.h"]),
+    includes = ["user"],
+    deps = ["//user/rtt:user_rtt"],
+)

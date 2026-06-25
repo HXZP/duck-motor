@@ -2,3 +2,6 @@
 stm32f103/MDK-ARM/motor
 build
 output
+bazel-*
+__pycache__/
+*.pyc

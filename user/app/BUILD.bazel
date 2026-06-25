@@ -1,0 +1,24 @@
+load("//bazel/mcu:mcu_rules.bzl", "mcu_library")
+
+package(default_visibility = ["//visibility:public"])
+
+mcu_library(
+    name = "user_app",
+    srcs = [
+        "as5600.c",
+        "can_protocol.c",
+        "flash.c",
+        "foc_init.c",
+        "log.c",
+        "soft_iic.c",
+        "user_main.c",
+    ],
+    hdrs = glob(["*.h"]),
+    includes = ["user"],
+    deps = [
+        "//user/common:user_info",
+        "//user/foc:user_foc",
+        "//user/kernel:user_kernel",
+        "//user/rtt:user_rtt",
+    ],
+)

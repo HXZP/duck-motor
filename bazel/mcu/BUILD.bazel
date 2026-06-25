@@ -1,0 +1,4 @@
+exports_files([
+    "mcu_rules.bzl",
+    "size_wrapper.bat",
+])

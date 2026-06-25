@@ -1,0 +1,23 @@
+load("//bazel/mcu:mcu_rules.bzl", "mcu_library")
+
+package(default_visibility = ["//visibility:public"])
+
+mcu_library(
+    name = "user_boot",
+    srcs = [
+        "can_protocol.c",
+        "crc16.c",
+        "jump.c",
+        "log.c",
+        "ota_process.c",
+        "queue.c",
+        "ymodem_core.c",
+        "ymodem_process.c",
+    ],
+    hdrs = glob(["*.h"]),
+    includes = ["user"],
+    deps = [
+        "//user/common:user_info",
+        "//user/rtt:user_rtt",
+    ],
+)

@@ -1,0 +1,24 @@
+load("//bazel/mcu:mcu_rules.bzl", "mcu_full_image", "mcu_ota_app_image")
+
+package(default_visibility = ["//visibility:public"])
+
+mcu_full_image(
+    name = "full",
+    app = "//stm32f103:motor",
+    boot = "//boot:boot",
+)
+
+mcu_ota_app_image(
+    name = "ota_app",
+    app = "//stm32f103:motor",
+)
+
+filegroup(
+    name = "firmware",
+    srcs = [
+        ":full",
+        ":ota_app",
+        "//boot:boot",
+        "//stm32f103:motor",
+    ],
+)

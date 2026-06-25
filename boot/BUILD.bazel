@@ -1,0 +1,69 @@
+load("//bazel/mcu:mcu_rules.bzl", "mcu_firmware", "mcu_library")
+
+package(default_visibility = ["//visibility:public"])
+
+mcu_library(
+    name = "stm32cubemx",
+    hdrs = glob([
+        "Core/Inc/**/*.h",
+        "Drivers/CMSIS/Device/ST/STM32F1xx/Include/**/*.h",
+        "Drivers/CMSIS/Include/**/*.h",
+        "Drivers/STM32F1xx_HAL_Driver/Inc/**/*.h",
+    ]),
+    defines = [
+        "USE_HAL_DRIVER",
+        "STM32F103xB",
+    ],
+    includes = [
+        "boot/Core/Inc",
+        "boot/Drivers/CMSIS/Device/ST/STM32F1xx/Include",
+        "boot/Drivers/CMSIS/Include",
+        "boot/Drivers/STM32F1xx_HAL_Driver/Inc",
+        "boot/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy",
+    ],
+)
+
+mcu_library(
+    name = "stm32_drivers",
+    srcs = [
+        "Core/Src/system_stm32f1xx.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_can.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_cortex.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_dma.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_exti.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_flash_ex.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_gpio_ex.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_pwr.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_rcc_ex.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim.c",
+        "Drivers/STM32F1xx_HAL_Driver/Src/stm32f1xx_hal_tim_ex.c",
+    ],
+    deps = [":stm32cubemx"],
+)
+
+mcu_firmware(
+    name = "boot",
+    srcs = [
+        "Core/Src/can.c",
+        "Core/Src/gpio.c",
+        "Core/Src/main.c",
+        "Core/Src/stm32f1xx_hal_msp.c",
+        "Core/Src/stm32f1xx_it.c",
+        "Core/Src/syscalls.c",
+        "Core/Src/sysmem.c",
+        "Core/Src/tim.c",
+        "startup_stm32f103xb.s",
+    ],
+    debug_copts = ["-Os", "-g3"],
+    linker_script = "STM32F103XX_FLASH.ld",
+    project_name = "boot",
+    deps = [
+        ":stm32_drivers",
+        ":stm32cubemx",
+        "//user/boot:user_boot",
+    ],
+)

@@ -1,0 +1,18 @@
+load("//scripts:bazel_flash_rules.bzl", "bazel_flash_target")
+
+exports_files([
+    "bazel_flash.py",
+    "bazel_flash_rules.bzl",
+    "copy_file.py",
+    "pack.py",
+    "print_memory_report.py",
+])
+
+bazel_flash_target(
+    name = "flash_full",
+    data = [
+        "//:full",
+        "bazel_flash.py",
+    ],
+    image_name = "full",
+)
