@@ -23,11 +23,12 @@ static uint32_t boot_jump_read_word(uint32_t address)
  * @brief 检查地址是否落在 SRAM 范围内。
  * @param address 待检查地址，单位：字节地址。
  * @return uint8_t 在 SRAM 范围内返回 1，否则返回 0。
+ * @note SRAM 栈顶地址本身是合法 MSP 初值，因此上边界使用闭区间。
  */
 static uint8_t boot_jump_is_sram_address(uint32_t address)
 {
     if ((address >= BOOT_JUMP_SRAM_START_ADDRESS) &&
-        (address < BOOT_JUMP_SRAM_END_ADDRESS))
+        (address <= BOOT_JUMP_SRAM_END_ADDRESS))
     {
         return 1u;
     }
