@@ -24,6 +24,14 @@ McuFirmwareInfo = provider(
     },
 )
 
+McuImageInfo = provider(
+    doc = "MCU 派生镜像输出元数据。",
+    fields = {
+        "bin": "当前构建类型的 BIN 输出文件。",
+        "artifacts": "按构建类型索引的镜像输出文件。",
+    },
+)
+
 def _dedupe(items):
     """去除列表中的重复项并保持原始顺序。"""
     result = []
@@ -392,7 +400,15 @@ def _mcu_full_image_impl(ctx):
         progress_message = "Packing full MCU image %{label}",
     )
 
-    return [DefaultInfo(files = depset([out]))]
+    return [
+        DefaultInfo(files = depset([out])),
+        McuImageInfo(
+            bin = out,
+            artifacts = {
+                build_type: out,
+            },
+        ),
+    ]
 
 mcu_full_image = rule(
     implementation = _mcu_full_image_impl,
@@ -437,7 +453,15 @@ def _mcu_ota_app_image_impl(ctx):
         progress_message = "Generating OTA app image %{label}",
     )
 
-    return [DefaultInfo(files = depset([out]))]
+    return [
+        DefaultInfo(files = depset([out])),
+        McuImageInfo(
+            bin = out,
+            artifacts = {
+                build_type: out,
+            },
+        ),
+    ]
 
 mcu_ota_app_image = rule(
     implementation = _mcu_ota_app_image_impl,
@@ -446,6 +470,158 @@ mcu_ota_app_image = rule(
         "output_prefix": attr.string(),
         "copy_tool": attr.label(
             default = Label("//scripts:copy_file.py"),
+            allow_single_file = True,
+        ),
+        "python": attr.string(default = "python"),
+    },
+)
+
+def _package_artifact_args(role, source_file, output_template):
+    """
+    @brief 生成固件发布包脚本的单个产物参数。
+    @param role 产物角色名称。
+    @param source_file 输入文件。
+    @param output_template 输出文件名模板。
+    @return 返回脚本参数列表。
+    """
+    return [
+        "--artifact",
+        role,
+        source_file.path,
+        output_template,
+    ]
+
+def _mcu_firmware_package_impl(ctx):
+    """
+    @brief 打包当前构建类型的固件发布目录。
+    @param ctx Bazel 规则上下文。
+    @return 返回发布目录输出。
+    """
+    build_type = _selected_build_type(ctx)
+    boot_info = ctx.attr.boot[McuFirmwareInfo]
+    app_info = ctx.attr.app[McuFirmwareInfo]
+    full_info = ctx.attr.full[McuImageInfo]
+    ota_app_info = ctx.attr.ota_app[McuImageInfo]
+    boot_artifacts = boot_info.artifacts[build_type]
+    app_artifacts = app_info.artifacts[build_type]
+    full_bin = full_info.artifacts[build_type]
+    ota_app_bin = ota_app_info.artifacts[build_type]
+    output_dir = ctx.actions.declare_directory(ctx.label.name)
+    package_name = ctx.attr.package_name
+    inputs = [
+        ctx.file.package_tool,
+        ctx.file.version_header,
+        full_bin,
+        ota_app_bin,
+        boot_artifacts["bin"],
+        boot_artifacts["hex"],
+        boot_artifacts["elf"],
+        boot_artifacts["map"],
+        boot_artifacts["size"],
+        app_artifacts["bin"],
+        app_artifacts["hex"],
+        app_artifacts["elf"],
+        app_artifacts["map"],
+        app_artifacts["size"],
+    ]
+    arguments = [
+        ctx.file.package_tool.path,
+        "--output-dir",
+        output_dir.path,
+        "--version-header",
+        ctx.file.version_header.path,
+        "--package-name",
+        package_name,
+        "--build-type",
+        build_type,
+    ]
+
+    arguments.extend(_package_artifact_args(
+        "full_bin",
+        full_bin,
+        "{package}_full_v{version}.bin",
+    ))
+    arguments.extend(_package_artifact_args(
+        "ota_app_bin",
+        ota_app_bin,
+        "{package}_ota_app_v{version}.bin",
+    ))
+    arguments.extend(_package_artifact_args(
+        "boot_bin",
+        boot_artifacts["bin"],
+        "{package}_boot_v{version}.bin",
+    ))
+    arguments.extend(_package_artifact_args(
+        "boot_hex",
+        boot_artifacts["hex"],
+        "{package}_boot_v{version}.hex",
+    ))
+    arguments.extend(_package_artifact_args(
+        "boot_elf",
+        boot_artifacts["elf"],
+        "{package}_boot_v{version}.elf",
+    ))
+    arguments.extend(_package_artifact_args(
+        "boot_map",
+        boot_artifacts["map"],
+        "{package}_boot_v{version}.map",
+    ))
+    arguments.extend(_package_artifact_args(
+        "boot_size",
+        boot_artifacts["size"],
+        "{package}_boot_v{version}.size.txt",
+    ))
+    arguments.extend(_package_artifact_args(
+        "app_bin",
+        app_artifacts["bin"],
+        "{package}_app_v{version}.bin",
+    ))
+    arguments.extend(_package_artifact_args(
+        "app_hex",
+        app_artifacts["hex"],
+        "{package}_app_v{version}.hex",
+    ))
+    arguments.extend(_package_artifact_args(
+        "app_elf",
+        app_artifacts["elf"],
+        "{package}_app_v{version}.elf",
+    ))
+    arguments.extend(_package_artifact_args(
+        "app_map",
+        app_artifacts["map"],
+        "{package}_app_v{version}.map",
+    ))
+    arguments.extend(_package_artifact_args(
+        "app_size",
+        app_artifacts["size"],
+        "{package}_app_v{version}.size.txt",
+    ))
+
+    ctx.actions.run(
+        inputs = inputs,
+        outputs = [output_dir],
+        executable = ctx.attr.python,
+        arguments = arguments,
+        mnemonic = "McuFirmwarePackage",
+        progress_message = "Packaging MCU firmware release directory %{label}",
+    )
+
+    return [DefaultInfo(files = depset([output_dir]))]
+
+mcu_firmware_package = rule(
+    implementation = _mcu_firmware_package_impl,
+    attrs = {
+        "boot": attr.label(providers = [McuFirmwareInfo], mandatory = True),
+        "app": attr.label(providers = [McuFirmwareInfo], mandatory = True),
+        "full": attr.label(providers = [McuImageInfo], mandatory = True),
+        "ota_app": attr.label(providers = [McuImageInfo], mandatory = True),
+        "package_name": attr.string(default = "motor_duck"),
+        "version_header": attr.label(
+            allow_single_file = [".h"],
+            mandatory = True,
+        ),
+        "package_tool": attr.label(
+            default = Label("//scripts:package_firmware.py"),
             allow_single_file = True,
         ),
         "python": attr.string(default = "python"),

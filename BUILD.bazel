@@ -1,5 +1,5 @@
 load("//bazel/mcu:clangd_rules.bzl", "mcu_compile_commands")
-load("//bazel/mcu:mcu_rules.bzl", "mcu_full_image", "mcu_ota_app_image")
+load("//bazel/mcu:mcu_rules.bzl", "mcu_firmware_package", "mcu_full_image", "mcu_ota_app_image")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,6 +12,16 @@ mcu_full_image(
 mcu_ota_app_image(
     name = "ota_app",
     app = "//stm32f103:motor",
+)
+
+mcu_firmware_package(
+    name = "firmware_package",
+    app = "//stm32f103:motor",
+    boot = "//boot:boot",
+    full = ":full",
+    ota_app = ":ota_app",
+    package_name = "motor_duck",
+    version_header = "//user/app:app_version.h",
 )
 
 mcu_compile_commands(
@@ -27,6 +37,7 @@ mcu_compile_commands(
 filegroup(
     name = "firmware",
     srcs = [
+        ":firmware_package",
         ":full",
         ":ota_app",
         "//boot:boot",

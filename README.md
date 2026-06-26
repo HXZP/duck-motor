@@ -23,6 +23,17 @@ bazel-bin/full_release.bin
 bazel-bin/boot/boot_release.bin
 bazel-bin/stm32f103/motor_release.bin
 bazel-bin/ota_app_release.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/
+```
+
+`firmware_package` 目录会按 App 版本号命名，并包含带版本号的固件文件和 `manifest.json`：
+
+```text
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_full_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_boot_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_app_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_ota_app_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/manifest.json
 ```
 
 调试版本：

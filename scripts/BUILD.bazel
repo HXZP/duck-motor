@@ -7,6 +7,7 @@ exports_files([
     "clangd_refresh_rules.bzl",
     "copy_file.py",
     "pack.py",
+    "package_firmware.py",
     "print_memory_report.py",
     "refresh_clangd.py",
 ])
