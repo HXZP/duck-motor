@@ -3,5 +3,7 @@ stm32f103/MDK-ARM/motor
 build
 output
 bazel-*
+.vscode/compile_commands.json
 __pycache__/
 *.pyc
+.vscode/.cache

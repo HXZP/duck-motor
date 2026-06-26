@@ -1,11 +1,14 @@
+load("//scripts:clangd_refresh_rules.bzl", "clangd_refresh_target")
 load("//scripts:bazel_flash_rules.bzl", "bazel_flash_target")
 
 exports_files([
     "bazel_flash.py",
     "bazel_flash_rules.bzl",
+    "clangd_refresh_rules.bzl",
     "copy_file.py",
     "pack.py",
     "print_memory_report.py",
+    "refresh_clangd.py",
 ])
 
 bazel_flash_target(
@@ -15,4 +18,12 @@ bazel_flash_target(
         "bazel_flash.py",
     ],
     image_name = "full",
+)
+
+clangd_refresh_target(
+    name = "refresh_clangd",
+    compile_commands = [
+        "//:app_clangd_compile_commands",
+        "//:boot_clangd_compile_commands",
+    ],
 )

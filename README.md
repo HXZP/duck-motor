@@ -54,6 +54,22 @@ bazel-bin/ota_app_debug.bin
 bazelisk build //:firmware --define=ARM_NONE_EABI_BIN=C:/PROGRA~1/Arm/GNUTOO~1/bin
 ```
 
+## clangd
+
+VSCode 的 clangd 使用 Bazel 生成的编译数据库。首次打开工程或修改构建规则后，执行：
+
+```powershell
+bazelisk run //scripts:refresh_clangd
+```
+
+调试配置对应的编译数据库：
+
+```powershell
+bazelisk run --config=debug //scripts:refresh_clangd
+```
+
+生成文件位于 `.vscode/compile_commands.json`，该文件是本地刷新产物，不需要提交。
+
 ## Bazel 烧录
 
 通过 J-Link 烧录 full 镜像：
