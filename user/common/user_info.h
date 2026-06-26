@@ -15,22 +15,37 @@ extern "C" {
 #define USER_INFO_FLASH_ADDRESS         0x0800FC00u
 #define USER_INFO_FLASH_PAGE_SIZE       1024u
 #define USER_INFO_MAGIC                 0xA5A55A5Au
-#define USER_INFO_VERSION               1u
+#define USER_INFO_VERSION               3u
 
-#define USER_INFO_DEFAULT_CAN_ID        0x10u
+#define USER_INFO_MANAGE_CAN_ID         0x7Eu
+#define USER_INFO_DEFAULT_CAN_ID        USER_INFO_MANAGE_CAN_ID
+#define USER_INFO_CAN_ID_MIN            0x01u
+#define USER_INFO_CAN_ID_MAX            0x7Fu
+#define USER_INFO_CAN_CONFIGURED_NO     0u
+#define USER_INFO_CAN_CONFIGURED_YES    1u
+#define USER_INFO_REPORT_DISABLED       0u
+#define USER_INFO_REPORT_ENABLED        1u
+#define USER_INFO_DEFAULT_REPORT_ENABLE USER_INFO_REPORT_DISABLED
+#define USER_INFO_DEFAULT_REPORT_PERIOD_MS 10u
+#define USER_INFO_MIN_REPORT_PERIOD_MS  10u
+#define USER_INFO_MAX_REPORT_PERIOD_MS  60000u
+
 #define USER_INFO_OTA_FLAG_APP          0u
 #define USER_INFO_OTA_FLAG_BOOT         1u
 
 /**
  * @brief 用户信息业务数据。
  *
- * 该结构体保存在 Flash 最后一页，用于在 App 和 Boot 之间共享参数。
+ * 该结构体保存到 Flash 最后一页，用于在 App 和 Boot 之间共享参数。
  */
 typedef struct
 {
     int32_t calibration_angle;      /**< 校准角度，单位：内部角度计数。 */
     uint32_t can_id;                /**< CAN 节点 ID，单位：无。 */
     uint32_t ota;                   /**< OTA 标志位，0 表示允许跳转 App，非 0 表示停留 Boot。 */
+    uint32_t can_configured;        /**< CAN 节点 ID 配置状态，单位：无。 */
+    uint32_t report_enabled;        /**< 电机主动上报使能状态，单位：无。 */
+    uint32_t report_period_ms;      /**< 电机主动上报周期，单位：毫秒。 */
 } user_info_data_t;
 
 /**

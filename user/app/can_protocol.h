@@ -1,16 +1,26 @@
 #ifndef __CAN_PROTOCOL_H
 #define __CAN_PROTOCOL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
+
 #include "can.h"
+#include "common/user_info.h"
 
-#define CAN_PROTOCOL_DEFAULT_NODE_ID (0x10U)
+#define CAN_PROTOCOL_MANAGE_NODE_ID       (USER_INFO_MANAGE_CAN_ID)
+#define CAN_PROTOCOL_DEFAULT_NODE_ID      (CAN_PROTOCOL_MANAGE_NODE_ID)
 
-#define CAN_PROTOCOL_HOST_COMMAND_BASE_ID (0x100U)
-#define CAN_PROTOCOL_MOTOR_ACK_BASE_ID    (0x180U)
-#define CAN_PROTOCOL_MOTOR_REPORT_BASE_ID (0x200U)
-#define CAN_PROTOCOL_OTA_CONTROL_BASE_ID  (0x400U)
+#define CAN_PROTOCOL_HOST_COMMAND_BASE_ID (0x100u)
+#define CAN_PROTOCOL_MOTOR_ACK_BASE_ID    (0x180u)
+#define CAN_PROTOCOL_MOTOR_REPORT_BASE_ID (0x200u)
+#define CAN_PROTOCOL_OTA_CONTROL_BASE_ID  (0x400u)
 
+/**
+ * @brief App CAN 命令码。
+ */
 typedef enum
 {
     CAN_PROTOCOL_CMD_SET_MODE = 0x01,
@@ -23,13 +33,22 @@ typedef enum
     CAN_PROTOCOL_CMD_GET_POSITION_PID_PARAM = 0x13,
     CAN_PROTOCOL_CMD_SET_CAN_ID = 0x20,
     CAN_PROTOCOL_CMD_GET_CAN_ID = 0x21,
+    CAN_PROTOCOL_CMD_GET_APP_VERSION = 0x22,
+    CAN_PROTOCOL_CMD_SET_REPORT_CONFIG = 0x23,
+    CAN_PROTOCOL_CMD_GET_REPORT_CONFIG = 0x24,
     CAN_PROTOCOL_CMD_ZERO_CALIBRATE = 0x30,
     CAN_PROTOCOL_CMD_GET_ZERO = 0x31,
     CAN_PROTOCOL_CMD_ENTER_BOOT_OTA = 0x40,
+    CAN_PROTOCOL_CMD_MANAGE_REPORT = 0x60,
+    CAN_PROTOCOL_CMD_MANAGE_IDENTIFY = 0x61,
+    CAN_PROTOCOL_CMD_MANAGE_SET_CAN_ID = 0x62,
     CAN_PROTOCOL_CMD_REPORT_POSITION = 0x80,
     CAN_PROTOCOL_CMD_REPORT_SPEED = 0x81
 } can_protocol_cmd_e;
 
+/**
+ * @brief App CAN 应答状态码。
+ */
 typedef enum
 {
     CAN_PROTOCOL_STATUS_OK = 0x00,
@@ -39,6 +58,9 @@ typedef enum
     CAN_PROTOCOL_STATUS_CAN_ERROR = 0x04
 } can_protocol_status_e;
 
+/**
+ * @brief PID 参数编号。
+ */
 typedef enum
 {
     CAN_PROTOCOL_PID_PARAM_P = 0x00,
@@ -55,9 +77,15 @@ typedef enum
 void can_protocol_init(void);
 
 /**
+ * @brief 轮询 CAN 协议层周期任务。
+ * @return void
+ */
+void can_protocol_poll(void);
+
+/**
  * @brief 处理一帧接收到的 CAN 协议数据。
  * @param rxframe 接收帧头。
- * @param rx_data 接收到的数据缓冲区指针。
+ * @param rx_data 接收到的数据区指针。
  * @return void
  */
 void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data);
@@ -82,8 +110,12 @@ int can_protocol_has_pending(void);
 
 /**
  * @brief 获取当前协议层使用的节点 ID。
- * @return uint16_t 当前节点 ID。
+ * @return uint16_t 当前节点 ID，单位：无。
  */
 uint16_t can_protocol_get_node_id(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

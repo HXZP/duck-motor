@@ -6,10 +6,11 @@ extern "C" {
 #endif
 
 #include "can.h"
+#include "common/user_info.h"
 
 #include <stdint.h>
 
-#define CAN_PROTOCOL_DEFAULT_NODE_ID       (0x10u)
+#define CAN_PROTOCOL_DEFAULT_NODE_ID       (USER_INFO_MANAGE_CAN_ID)
 #define CAN_PROTOCOL_OTA_CONTROL_BASE_ID   (0x400u)
 #define CAN_PROTOCOL_OTA_RESPONSE_BASE_ID  (0x500u)
 

@@ -2,6 +2,7 @@
 
 #include "main.h"
 #include "app/as5600.h"
+#include "app/app_light.h"
 #include "app/can_protocol.h"
 #include "app/foc_init.h"
 #include "app/log.h"
@@ -81,14 +82,16 @@ void User_Main(void)
     s_user_main_started = 1U;
 
     log_init();
-    can_protocol_init();
+    AppLight_Init();
     I2C_Init();
     as5600Init();
     foc_root_init();
+    can_protocol_init();
     user_main_create_tasks();
 
     while (1)
     {
+        can_protocol_poll();
         Thread_Schedule();
         __WFI();
     }

@@ -4,7 +4,13 @@ package(default_visibility = ["//visibility:public"])
 
 mcu_library(
     name = "user_info",
-    srcs = ["user_info.c"],
-    hdrs = ["user_info.h"],
+    srcs = [
+        "chip_uid.c",
+        "user_info.c",
+    ],
+    hdrs = [
+        "chip_uid.h",
+        "user_info.h",
+    ],
     includes = ["user"],
 )

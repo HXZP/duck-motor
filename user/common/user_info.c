@@ -4,27 +4,6 @@
 
 #include <string.h>
 
-#define USER_INFO_LEGACY_MAGIC  0xA5A5A5A5u
-
-/**
- * @brief 旧版 App 参数记录。
- */
-typedef struct
-{
-    int32_t calibration_angle;      /**< 校准角度，单位：内部角度计数。 */
-    uint32_t can_id;                /**< CAN 节点 ID，单位：无。 */
-} user_info_legacy_data_t;
-
-/**
- * @brief 旧版用户信息 Flash 存储记录。
- */
-typedef struct
-{
-    uint32_t magic;                 /**< 旧版记录魔数，单位：无。 */
-    user_info_legacy_data_t data;   /**< 旧版用户信息业务数据。 */
-    uint32_t crc32;                 /**< 旧版 CRC32 校验值，单位：无。 */
-} user_info_legacy_record_t;
-
 /**
  * @brief 初始化 CRC32 计算值。
  * @return uint32_t CRC32 初始值，单位：无。
@@ -103,6 +82,69 @@ static uint32_t user_info_calc_crc32(const user_info_record_t *record)
 }
 
 /**
+ * @brief 判断节点 ID 是否允许作为已配置业务 ID。
+ * @param node_id 待检查节点 ID，单位：无。
+ * @return uint8_t 合法返回 1，否则返回 0。
+ */
+static uint8_t user_info_is_valid_configured_can_id(uint32_t node_id)
+{
+    if ((node_id < USER_INFO_CAN_ID_MIN) || (node_id > USER_INFO_CAN_ID_MAX))
+    {
+        return 0u;
+    }
+
+    if (node_id == USER_INFO_MANAGE_CAN_ID)
+    {
+        return 0u;
+    }
+
+    return 1u;
+}
+
+/**
+ * @brief 归一化用户信息数据。
+ * @param info 待归一化用户信息。
+ * @return void
+ */
+static void user_info_normalize_data(user_info_data_t *info)
+{
+    if (info == NULL)
+    {
+        return;
+    }
+
+    if ((info->ota != USER_INFO_OTA_FLAG_APP) && (info->ota != USER_INFO_OTA_FLAG_BOOT))
+    {
+        info->ota = USER_INFO_OTA_FLAG_APP;
+    }
+
+    if (info->report_enabled != USER_INFO_REPORT_ENABLED)
+    {
+        info->report_enabled = USER_INFO_REPORT_DISABLED;
+    }
+
+    if ((info->report_period_ms < USER_INFO_MIN_REPORT_PERIOD_MS) ||
+        (info->report_period_ms > USER_INFO_MAX_REPORT_PERIOD_MS))
+    {
+        info->report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
+    }
+
+    if (info->can_configured == USER_INFO_CAN_CONFIGURED_YES)
+    {
+        if (user_info_is_valid_configured_can_id(info->can_id) == 0u)
+        {
+            info->can_id = USER_INFO_MANAGE_CAN_ID;
+            info->can_configured = USER_INFO_CAN_CONFIGURED_NO;
+        }
+    }
+    else
+    {
+        info->can_id = USER_INFO_MANAGE_CAN_ID;
+        info->can_configured = USER_INFO_CAN_CONFIGURED_NO;
+    }
+}
+
+/**
  * @brief 校验用户信息记录。
  * @param record 用户信息记录。
  * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
@@ -131,37 +173,6 @@ static int user_info_validate_record(const user_info_record_t *record)
 }
 
 /**
- * @brief 尝试读取旧版用户信息记录。
- * @param info 用户信息输出缓冲区。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
- */
-static int user_info_try_load_legacy(user_info_data_t *info)
-{
-    const user_info_legacy_record_t *legacy_record;
-
-    if (info == NULL)
-    {
-        return USER_INFO_ERR_PARAM;
-    }
-
-    legacy_record = (const user_info_legacy_record_t *)USER_INFO_FLASH_ADDRESS;
-    if (legacy_record->magic != USER_INFO_LEGACY_MAGIC)
-    {
-        return USER_INFO_ERR_VERIFY;
-    }
-
-    if ((legacy_record->data.can_id == 0u) || (legacy_record->data.can_id > 0x7Fu))
-    {
-        return USER_INFO_ERR_VERIFY;
-    }
-
-    info->calibration_angle = legacy_record->data.calibration_angle;
-    info->can_id = legacy_record->data.can_id;
-    info->ota = USER_INFO_OTA_FLAG_APP;
-    return USER_INFO_OK;
-}
-
-/**
  * @brief 将用户信息打包成 Flash 记录。
  * @param info 用户信息业务数据。
  * @param record 用户信息记录输出缓冲区。
@@ -178,6 +189,7 @@ static int user_info_pack_record(const user_info_data_t *info, user_info_record_
     record->magic = USER_INFO_MAGIC;
     record->version = USER_INFO_VERSION;
     record->data = *info;
+    user_info_normalize_data(&record->data);
     record->crc32 = user_info_calc_crc32(record);
 
     return USER_INFO_OK;
@@ -254,8 +266,11 @@ int UserInfo_GetDefault(user_info_data_t *info)
 
     memset(info, 0, sizeof(*info));
     info->calibration_angle = 0;
-    info->can_id = USER_INFO_DEFAULT_CAN_ID;
+    info->can_id = USER_INFO_MANAGE_CAN_ID;
     info->ota = USER_INFO_OTA_FLAG_APP;
+    info->can_configured = USER_INFO_CAN_CONFIGURED_NO;
+    info->report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
+    info->report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
 
     return USER_INFO_OK;
 }
@@ -277,19 +292,11 @@ int UserInfo_Load(user_info_data_t *info)
     record = (const user_info_record_t *)USER_INFO_FLASH_ADDRESS;
     if (user_info_validate_record(record) != USER_INFO_OK)
     {
-        if (user_info_try_load_legacy(info) == USER_INFO_OK)
-        {
-            return USER_INFO_OK;
-        }
-
         return UserInfo_GetDefault(info);
     }
 
     *info = record->data;
-    if ((info->can_id == 0u) || (info->can_id > 0x7Fu))
-    {
-        info->can_id = USER_INFO_DEFAULT_CAN_ID;
-    }
+    user_info_normalize_data(info);
 
     return USER_INFO_OK;
 }

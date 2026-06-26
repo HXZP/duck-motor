@@ -204,8 +204,13 @@ static void execute_command(PARSED_COMMAND cmd, const char* original_line) {
                 unsigned int can_id = (unsigned int)strtoul(p, NULL, 16);
                 printf("RTT CLI: Setting CAN ID to 0x%X (%u)\n", can_id, can_id);
                 recoder_data data = {0};
-                (void)Load_Recoder(&data);
+                if (Load_Recoder(&data) == 0U)
+                {
+                    data.report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
+                    data.report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
+                }
                 data.can_id = can_id;
+                data.can_configured = USER_INFO_CAN_CONFIGURED_YES;
                 Save_Recoder(data);
                 printf("RTT CLI: CAN ID set completed.\n");
             } else {

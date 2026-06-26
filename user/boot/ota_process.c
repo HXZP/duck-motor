@@ -1,5 +1,6 @@
 #include "boot/ota_process.h"
 
+#include "boot/boot_light.h"
 #include "boot/boot_ota_def.h"
 #include "boot/jump.h"
 #include "boot/log.h"
@@ -107,6 +108,7 @@ static void ota_process_prepare_jump_or_ota(void)
     }
 
     s_ota_process_ctx.state = OTA_PROCESS_STATE_WAIT_OTA_COMMAND;
+    BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
 }
 
 /**
@@ -119,6 +121,7 @@ void OtaProcess_Init(void)
     s_ota_process_ctx.request_pending = 0u;
     s_ota_process_ctx.state = OTA_PROCESS_STATE_PREPARE;
 
+    BootLight_Init();
     YmodemProcess_Init();
 }
 
@@ -159,6 +162,8 @@ void OtaProcess_Poll(void)
 {
     int ret;
 
+    BootLight_Poll();
+
     switch (s_ota_process_ctx.state)
     {
         case OTA_PROCESS_STATE_PREPARE:
@@ -170,6 +175,7 @@ void OtaProcess_Poll(void)
 
         case OTA_PROCESS_STATE_WAIT_OTA_COMMAND:
         {
+            BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
             if (s_ota_process_ctx.request_pending == 0u)
             {
                 return;
@@ -182,11 +188,13 @@ void OtaProcess_Poll(void)
 
         case OTA_PROCESS_STATE_START_OTA:
         {
+            BootLight_SetMode(BOOT_LIGHT_MODE_UPGRADING);
             ret = YmodemProcess_StartSession();
             if (ret != BOOT_OK)
             {
                 ota_process_log_failure(ret);
                 s_ota_process_ctx.state = OTA_PROCESS_STATE_WAIT_OTA_COMMAND;
+                BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
                 return;
             }
 
@@ -197,6 +205,7 @@ void OtaProcess_Poll(void)
 
         case OTA_PROCESS_STATE_POLL_OTA:
         {
+            BootLight_SetMode(BOOT_LIGHT_MODE_UPGRADING);
             ret = YmodemProcess_PollSession();
             if (ret == BOOT_ERR_BUSY)
             {
@@ -210,6 +219,7 @@ void OtaProcess_Poll(void)
 
         case OTA_PROCESS_STATE_HANDLE_OTA_RESULT:
         {
+            BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
             if (s_ota_process_ctx.ota_result == BOOT_OK)
             {
                 ret = UserInfo_SaveOtaFlag(USER_INFO_OTA_FLAG_APP);
@@ -241,6 +251,7 @@ void OtaProcess_Poll(void)
         default:
         {
             s_ota_process_ctx.state = OTA_PROCESS_STATE_PREPARE;
+            BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
             return;
         }
     }

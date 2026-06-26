@@ -17,10 +17,13 @@ typedef struct
     int32_t calibration_angle; /**< 校准角度，单位：内部角度计数。 */
     uint32_t can_id;           /**< CAN 节点 ID，单位：无。 */
     uint32_t ota;              /**< OTA 标志位，0 表示允许跳转 App，非 0 表示停留 Boot。 */
+    uint32_t can_configured;   /**< CAN 节点 ID 配置状态，单位：无。 */
+    uint32_t report_enabled;   /**< 电机主动上报使能状态，单位：无。 */
+    uint32_t report_period_ms; /**< 电机主动上报周期，单位：毫秒。 */
 } recoder_data;
 
 /**
- * @brief 兼容旧代码的用户信息记录结构。
+ * @brief 兼容旧代码命名的用户信息记录结构。
  */
 typedef struct
 {

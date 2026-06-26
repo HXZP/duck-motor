@@ -16,6 +16,9 @@ static void flash_copy_user_info_to_recoder(const user_info_data_t *info, recode
     data->calibration_angle = info->calibration_angle;
     data->can_id = info->can_id;
     data->ota = info->ota;
+    data->can_configured = info->can_configured;
+    data->report_enabled = info->report_enabled;
+    data->report_period_ms = info->report_period_ms;
 }
 
 /**
@@ -34,6 +37,9 @@ static void flash_copy_recoder_to_user_info(recoder_data data, user_info_data_t 
     info->calibration_angle = data.calibration_angle;
     info->can_id = data.can_id;
     info->ota = data.ota;
+    info->can_configured = data.can_configured;
+    info->report_enabled = data.report_enabled;
+    info->report_period_ms = data.report_period_ms;
 }
 
 /**
@@ -69,11 +75,6 @@ void Save_Recoder(recoder_data data)
     user_info_data_t info;
 
     flash_copy_recoder_to_user_info(data, &info);
-    if ((info.can_id == 0u) || (info.can_id > 0x7Fu))
-    {
-        info.can_id = USER_INFO_DEFAULT_CAN_ID;
-    }
-
     UserInfo_Save(&info);
 }
 

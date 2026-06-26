@@ -7,6 +7,7 @@
 #include "log.h"
 #include "can.h"
 #include "can_protocol.h"
+#include "app_light.h"
 
 #include "stm32f1xx_hal.h"          // HAL库核心头文件
 #include "stm32f1xx_hal_tim.h"      // 定时器HAL库
@@ -334,7 +335,11 @@ void foc_root_init(void)
     else
     {
         data.calibration_angle = foc_zero_angle_reset();
-        data.can_id = CAN_PROTOCOL_DEFAULT_NODE_ID;
+        data.can_id = USER_INFO_MANAGE_CAN_ID;
+        data.ota = USER_INFO_OTA_FLAG_APP;
+        data.can_configured = USER_INFO_CAN_CONFIGURED_NO;
+        data.report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
+        data.report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
         Save_Recoder(data);
         printf("zero angle saved: %d\n", data.calibration_angle);
     }
@@ -394,43 +399,17 @@ void foc_output_enable(uint8_t enable)
     }
 }
 
-uint16_t led_cnt = 0;
+/**
+ * @brief 定时器周期回调函数。
+ * @param htim 定时器句柄指针。
+ * @return void
+ */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (htim->Instance == TIM2) {
-        
-        led_cnt++;
-
-        if(led_cnt <= 700)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-        }
-        else if(led_cnt <= 800)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-        }   
-        else if(led_cnt <= 900)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-        }
-        else if(led_cnt <= 1000)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-        }
-        else if(led_cnt <= 1100)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,0);
-        }
-        else if(led_cnt < 1500)
-        {
-            HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,1);
-        }
-        else if(led_cnt == 1500)
-        {
-            led_cnt = 0;
-        }        
-        
-         updata_flag = 1;
+    if (htim->Instance == TIM2)
+    {
+        AppLight_Poll();
+        updata_flag = 1;
     }
 }
 
