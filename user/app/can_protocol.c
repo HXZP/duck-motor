@@ -16,6 +16,9 @@
 #define CAN_PROTOCOL_MANAGE_IDENTIFY_MAX_S           60u
 #define CAN_PROTOCOL_OTA_START_DLC                   4u
 #define CAN_PROTOCOL_REPORT_CONFIG_DLC               4u
+#define CAN_PROTOCOL_RESET_CAN_CONFIG_DLC            2u
+#define CAN_PROTOCOL_RESET_CAN_CONFIG_CONFIRM_CODE   0xA5u
+#define CAN_PROTOCOL_RESET_DELAY_MS                  50u
 #define CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS      1000u
 
 /**
@@ -377,12 +380,12 @@ static void can_protocol_store_node_id(uint16_t node_id)
     {
         data.calibration_angle = foc_get_zero_angle();
         data.ota = USER_INFO_OTA_FLAG_APP;
+        data.report_enabled = can_protocol_report_enabled;
+        data.report_period_ms = can_protocol_report_period_ms;
     }
 
     data.can_id = node_id;
     data.can_configured = USER_INFO_CAN_CONFIGURED_YES;
-    data.report_enabled = can_protocol_report_enabled;
-    data.report_period_ms = can_protocol_report_period_ms;
     Save_Recoder(data);
 }
 
@@ -404,6 +407,40 @@ static void can_protocol_store_zero_angle(int32_t zero_angle)
 
     data.calibration_angle = zero_angle;
     Save_Recoder(data);
+}
+
+/**
+ * @brief 复位 CAN 配置信息。
+ * @return uint8_t 成功返回 CAN_PROTOCOL_STATUS_OK，失败返回 CAN_PROTOCOL_STATUS_xxx。
+ */
+static uint8_t can_protocol_reset_can_config(void)
+{
+    user_info_data_t info;
+    int ret;
+
+    foc_current_set_target(0);
+    foc_set_target(0, 0, 0);
+    foc_set_state(&foc, Foc_Shutdown);
+    foc_output_enable(0u);
+
+    ret = UserInfo_Load(&info);
+    if (ret != USER_INFO_OK)
+    {
+        ret = UserInfo_GetDefault(&info);
+        if (ret != USER_INFO_OK)
+        {
+            return CAN_PROTOCOL_STATUS_CAN_ERROR;
+        }
+    }
+
+    info.can_id = USER_INFO_MANAGE_CAN_ID;
+    info.can_configured = USER_INFO_CAN_CONFIGURED_NO;
+    if (UserInfo_Save(&info) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_CAN_ERROR;
+    }
+
+    return CAN_PROTOCOL_STATUS_OK;
 }
 
 /**
@@ -1083,12 +1120,19 @@ void can_protocol_init(void)
            AppVersion_GetString(),
            (unsigned long)can_protocol_short_uid);
 
-    if ((Load_Recoder(&data) != 0u) &&
-        (data.can_configured == USER_INFO_CAN_CONFIGURED_YES) &&
-        (can_protocol_is_valid_configured_node_id(data.can_id) != 0u))
+    if (Load_Recoder(&data) != 0u)
     {
         can_protocol_load_report_config(&data);
-        can_protocol_enter_configured_state((uint16_t)data.can_id);
+
+        if ((data.can_configured == USER_INFO_CAN_CONFIGURED_YES) &&
+            (can_protocol_is_valid_configured_node_id(data.can_id) != 0u))
+        {
+            can_protocol_enter_configured_state((uint16_t)data.can_id);
+        }
+        else
+        {
+            can_protocol_enter_unconfigured_state();
+        }
     }
     else
     {
@@ -1525,6 +1569,31 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
             ack_payload[0] = can_protocol_report_enabled;
             can_protocol_encode_uint16(&ack_payload[1], (uint16_t)can_protocol_report_period_ms);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 3u);
+            return;
+        }
+
+        case CAN_PROTOCOL_CMD_RESET_CAN_CONFIG:
+        {
+            if (rxframe.DLC < CAN_PROTOCOL_RESET_CAN_CONFIG_DLC)
+            {
+                status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                break;
+            }
+
+            if (rx_data[1] != CAN_PROTOCOL_RESET_CAN_CONFIG_CONFIRM_CODE)
+            {
+                status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                break;
+            }
+
+            status = can_protocol_reset_can_config();
+            can_protocol_send_ack(rx_data[0], status, NULL, 0u);
+            if (status == CAN_PROTOCOL_STATUS_OK)
+            {
+                HAL_Delay(CAN_PROTOCOL_RESET_DELAY_MS);
+                NVIC_SystemReset();
+            }
+
             return;
         }
 
