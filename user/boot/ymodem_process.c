@@ -2,6 +2,7 @@
 
 #include "boot/boot_ota_def.h"
 #include "boot/can_protocol.h"
+#include "boot/crc16.h"
 #include "boot/log.h"
 #include "boot/queue.h"
 #include "common/user_info.h"
@@ -11,6 +12,14 @@
 #define YMODEM_PROCESS_CAN_DATA_QUEUE_MARGIN   4u
 #define YMODEM_PROCESS_CAN_DATA_QUEUE_MAX_SIZE \
     (YMODEM_CORE_PACKET_1K_SIZE + YMODEM_CORE_PACKET_OVERHEAD + YMODEM_PROCESS_CAN_DATA_QUEUE_MARGIN)
+#define YMODEM_PROCESS_OTA_MAGIC_OFFSET        0u
+#define YMODEM_PROCESS_OTA_MAGIC_SIZE          16u
+#define YMODEM_PROCESS_OTA_VERSION_OFFSET      16u
+#define YMODEM_PROCESS_OTA_HEADER_SIZE_OFFSET  17u
+#define YMODEM_PROCESS_OTA_HEADER_CRC_OFFSET   18u
+#define YMODEM_PROCESS_OTA_APP_SIZE_OFFSET     20u
+#define YMODEM_PROCESS_OTA_APP_CRC_OFFSET      24u
+#define YMODEM_PROCESS_OTA_HEADER_VERSION      1u
 
 /**
  * @brief YMODEM 处理上下文。
@@ -22,6 +31,8 @@ typedef struct
     ymodem_process_file_info_t file_info;                     /**< 当前文件信息。 */
     uint32_t flash_destination;                               /**< 当前 Flash 写入地址，单位：字节地址。 */
     uint32_t payload_written;                                 /**< 已写入载荷长度，单位：字节。 */
+    uint16_t expected_app_crc16;                              /**< 业务头期望 App CRC16，单位：无。 */
+    uint8_t business_header_verified;                         /**< 业务头已校验标志，单位：无。 */
     uint8_t transfer_enabled;                                 /**< 传输使能标志。 */
 } ymodem_process_context_t;
 
@@ -31,6 +42,10 @@ static int ymodem_process_port_write_bytes(const uint8_t *data, uint32_t len, vo
 
 static ymodem_core_t s_ymodem_core = {0};
 static ymodem_process_context_t s_ymodem_process_ctx = {0};
+static const uint8_t s_ymodem_process_ota_magic[YMODEM_PROCESS_OTA_MAGIC_SIZE] =
+{
+    'M', 'O', 'T', 'O', 'R', '_', 'D', 'U', 'C', 'K', '_', 'O', 'T', 'A', 0u, 0u
+};
 
 static const ymodem_core_port_t s_ymodem_process_port =
 {
@@ -67,6 +82,130 @@ static uint32_t ymodem_process_align_down_page(uint32_t address)
 static uint32_t ymodem_process_align_up_page(uint32_t address)
 {
     return (address + YMODEM_PROCESS_FLASH_PAGE_SIZE - 1u) & ~(YMODEM_PROCESS_FLASH_PAGE_SIZE - 1u);
+}
+
+/**
+ * @brief 从缓冲区读取小端 16 位无符号数。
+ * @param data 输入数据缓冲区。
+ * @return uint16_t 读取到的 16 位无符号数，单位：无。
+ */
+static uint16_t ymodem_process_read_le16(const uint8_t *data)
+{
+    return (uint16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+/**
+ * @brief 从缓冲区读取小端 32 位无符号数。
+ * @param data 输入数据缓冲区。
+ * @return uint32_t 读取到的 32 位无符号数，单位：无。
+ */
+static uint32_t ymodem_process_read_le32(const uint8_t *data)
+{
+    return ((uint32_t)data[0]) |
+           ((uint32_t)data[1] << 8) |
+           ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+}
+
+/**
+ * @brief 计算 OTA 业务头 CRC16。
+ * @param header 业务头缓冲区。
+ * @return uint16_t CRC16 校验值，单位：无。
+ * @note 计算时业务头 CRC 字段按 0 处理。
+ */
+static uint16_t ymodem_process_calc_header_crc16(const uint8_t *header)
+{
+    uint8_t temp_header[YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH];
+
+    memcpy(temp_header, header, YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH);
+    temp_header[YMODEM_PROCESS_OTA_HEADER_CRC_OFFSET] = 0u;
+    temp_header[YMODEM_PROCESS_OTA_HEADER_CRC_OFFSET + 1u] = 0u;
+    return BootCrc16_CcittCalc(temp_header, YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH);
+}
+
+/**
+ * @brief 校验 OTA 业务头并提取期望 CRC。
+ * @param header 业务头缓冲区。
+ * @param payload_size YMODEM 文件扣除业务头后的 App 长度，单位：字节。
+ * @return int 成功返回 BOOT_OK，失败返回 BOOT_ERR_xxx。
+ */
+static int ymodem_process_verify_business_header(const uint8_t *header, uint32_t payload_size)
+{
+    uint16_t header_crc16;
+    uint16_t expected_header_crc16;
+    uint32_t app_size;
+
+    if (header == NULL)
+    {
+        return BOOT_ERR_PARAM;
+    }
+
+    if (memcmp(&header[YMODEM_PROCESS_OTA_MAGIC_OFFSET],
+               s_ymodem_process_ota_magic,
+               YMODEM_PROCESS_OTA_MAGIC_SIZE) != 0)
+    {
+        return BOOT_ERR_VERIFY;
+    }
+
+    if (header[YMODEM_PROCESS_OTA_VERSION_OFFSET] != YMODEM_PROCESS_OTA_HEADER_VERSION)
+    {
+        return BOOT_ERR_VERIFY;
+    }
+
+    if (header[YMODEM_PROCESS_OTA_HEADER_SIZE_OFFSET] != YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH)
+    {
+        return BOOT_ERR_VERIFY;
+    }
+
+    app_size = ymodem_process_read_le32(&header[YMODEM_PROCESS_OTA_APP_SIZE_OFFSET]);
+    if (app_size != payload_size)
+    {
+        return BOOT_ERR_VERIFY;
+    }
+
+    header_crc16 = ymodem_process_read_le16(&header[YMODEM_PROCESS_OTA_HEADER_CRC_OFFSET]);
+    expected_header_crc16 = ymodem_process_calc_header_crc16(header);
+    if (header_crc16 != expected_header_crc16)
+    {
+        printf("YMODEM header crc mismatch: expect=0x%04X actual=0x%04X\r\n",
+               (unsigned int)header_crc16,
+               (unsigned int)expected_header_crc16);
+        return BOOT_ERR_VERIFY;
+    }
+
+    s_ymodem_process_ctx.expected_app_crc16 =
+        ymodem_process_read_le16(&header[YMODEM_PROCESS_OTA_APP_CRC_OFFSET]);
+    s_ymodem_process_ctx.business_header_verified = 1u;
+    printf("YMODEM business header: payload=%lu crc16=0x%04X\r\n",
+           (unsigned long)payload_size,
+           (unsigned int)s_ymodem_process_ctx.expected_app_crc16);
+    return BOOT_OK;
+}
+
+/**
+ * @brief 校验已经写入 Flash 的 App CRC16。
+ * @return int 成功返回 BOOT_OK，失败返回 BOOT_ERR_xxx。
+ */
+static int ymodem_process_verify_flash_app_crc16(void)
+{
+    uint16_t actual_crc16;
+
+    if (s_ymodem_process_ctx.business_header_verified == 0u)
+    {
+        return BOOT_ERR_VERIFY;
+    }
+
+    actual_crc16 = BootCrc16_CcittCalc((const uint8_t *)YMODEM_PROCESS_APP_ADDRESS,
+                                       s_ymodem_process_ctx.file_info.payload_size);
+    if (actual_crc16 != s_ymodem_process_ctx.expected_app_crc16)
+    {
+        printf("YMODEM app crc mismatch: expect=0x%04X actual=0x%04X\r\n",
+               (unsigned int)s_ymodem_process_ctx.expected_app_crc16,
+               (unsigned int)actual_crc16);
+        return BOOT_ERR_VERIFY;
+    }
+
+    return BOOT_OK;
 }
 
 /**
@@ -242,7 +381,6 @@ static int ymodem_process_port_write_bytes(const uint8_t *data, uint32_t len, vo
 static int ymodem_process_handle_header_event(const ymodem_core_event_t *event)
 {
     uint32_t payload_size;
-    int ret;
 
     if ((event == NULL) || (event->file_name == NULL))
     {
@@ -267,14 +405,10 @@ static int ymodem_process_handle_header_event(const ymodem_core_event_t *event)
     s_ymodem_process_ctx.file_info.file_size = (int32_t)event->file_size;
     s_ymodem_process_ctx.file_info.payload_size = payload_size;
 
-    ret = ymodem_process_flash_erase(payload_size);
-    if (ret != BOOT_OK)
-    {
-        return ret;
-    }
-
     s_ymodem_process_ctx.flash_destination = YMODEM_PROCESS_APP_ADDRESS;
     s_ymodem_process_ctx.payload_written = 0u;
+    s_ymodem_process_ctx.expected_app_crc16 = 0u;
+    s_ymodem_process_ctx.business_header_verified = 0u;
     printf("YMODEM header: file=%s total=%lu payload=%lu\r\n",
            (char *)s_ymodem_process_ctx.file_info.file_name,
            (unsigned long)event->file_size,
@@ -313,8 +447,25 @@ static int ymodem_process_handle_data_event(const ymodem_core_event_t *event)
         memcpy(s_ymodem_process_ctx.file_info.head_packet_info,
                event->data,
                YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH);
+        ret = ymodem_process_verify_business_header(s_ymodem_process_ctx.file_info.head_packet_info,
+                                                    s_ymodem_process_ctx.file_info.payload_size);
+        if (ret != BOOT_OK)
+        {
+            return ret;
+        }
+
+        ret = ymodem_process_flash_erase(s_ymodem_process_ctx.file_info.payload_size);
+        if (ret != BOOT_OK)
+        {
+            return ret;
+        }
+
         write_ptr = &event->data[YMODEM_PROCESS_SIZE_FIRST_HEAD_PACKET];
         write_length = event->data_length - YMODEM_PROCESS_SIZE_FIRST_HEAD_PACKET;
+    }
+    else if (s_ymodem_process_ctx.business_header_verified == 0u)
+    {
+        return BOOT_ERR_VERIFY;
     }
 
     remain_length = s_ymodem_process_ctx.file_info.payload_size - s_ymodem_process_ctx.payload_written;
@@ -388,7 +539,15 @@ static int ymodem_process_handle_core_event(const ymodem_core_event_t *event, vo
                 return BOOT_ERR_VERIFY;
             }
 
-            printf("YMODEM finish: payload=%lu\r\n", (unsigned long)s_ymodem_process_ctx.payload_written);
+            ret = ymodem_process_verify_flash_app_crc16();
+            if (ret != BOOT_OK)
+            {
+                return ret;
+            }
+
+            printf("YMODEM finish: payload=%lu crc16=0x%04X\r\n",
+                   (unsigned long)s_ymodem_process_ctx.payload_written,
+                   (unsigned int)s_ymodem_process_ctx.expected_app_crc16);
             return BOOT_OK;
         }
 
@@ -431,6 +590,8 @@ void YmodemProcess_ResetSession(void)
     memset(&s_ymodem_process_ctx.file_info, 0, sizeof(s_ymodem_process_ctx.file_info));
     s_ymodem_process_ctx.flash_destination = YMODEM_PROCESS_APP_ADDRESS;
     s_ymodem_process_ctx.payload_written = 0u;
+    s_ymodem_process_ctx.expected_app_crc16 = 0u;
+    s_ymodem_process_ctx.business_header_verified = 0u;
     s_ymodem_process_ctx.transfer_enabled = 0u;
 }
 

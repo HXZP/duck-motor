@@ -73,6 +73,8 @@ class PcanOtaClient:
         self.config = config
         self.pcan = PcanBasic(config.dll_path)
         self.channel = 0
+        self.command_id = 0x100 + config.node_id
+        self.response_id = 0x180 + config.node_id
         self.ota_control_id = 0x400 + config.node_id
         self.ota_response_id = 0x500 + config.node_id
         self.manage_report_id = 0x200 + DEFAULT_NODE_ID
@@ -262,6 +264,60 @@ class PcanOtaClient:
 
         return report_count
 
+    def wait_app_version(self) -> tuple[int, int, int]:
+        """等待已配置 App 节点返回版本号。
+        Returns:
+            App 版本号三元组，单位：无。
+        """
+
+        deadline = time.time() + self.config.post_timeout_s
+        next_request_time = 0.0
+        request = bytes([0x22, 0, 0, 0, 0, 0, 0, 0])
+
+        while time.time() < deadline:
+            now = time.time()
+            if now >= next_request_time:
+                self.write_frame(self.command_id, request)
+                self.log(
+                    f"POST TX 0x{self.command_id:03X}: "
+                    f"{format_data(request)}"
+                )
+                next_request_time = now + 0.5
+
+            frame = self.read_frame(min(0.2, max(0.0, deadline - time.time())))
+            if frame is None:
+                continue
+
+            self.log(f"POST RX 0x{frame.std_id:03X}: {format_data(frame.data)}")
+            if frame.std_id != self.response_id:
+                continue
+
+            if len(frame.data) < 5:
+                continue
+
+            if frame.data[0] != 0x22:
+                continue
+
+            if frame.data[1] != 0x00:
+                raise RuntimeError(f"App 版本读取失败: status=0x{frame.data[1]:02X}")
+
+            return frame.data[2], frame.data[3], frame.data[4]
+
+        raise TimeoutError("OTA 完成后未收到 App 版本响应")
+
+    def run_post_check(self) -> None:
+        """执行 OTA 后 App 恢复检查。"""
+
+        if self.config.node_id == DEFAULT_NODE_ID:
+            report_count = self.wait_app_report()
+            if report_count < 1:
+                raise TimeoutError("OTA 完成后未收到 App 管理上报")
+            self.log(f"OTA 后 App 管理上报数量: {report_count}")
+            return
+
+        version = self.wait_app_version()
+        self.log(f"OTA 后 App 版本: {version[0]}.{version[1]}.{version[2]}")
+
     def run(self) -> int:
         """执行完整 OTA 流程。
 
@@ -340,10 +396,7 @@ class PcanOtaClient:
             self.wait_response_byte(ymodem.ACK, self.config.packet_timeout_s, "结束空头 ACK")
 
             if self.config.post_check:
-                report_count = self.wait_app_report()
-                if report_count < 1:
-                    raise TimeoutError("OTA 完成后未收到 App 管理上报")
-                self.log(f"OTA 后 App 管理上报数量: {report_count}")
+                self.run_post_check()
 
             self.log("OTA 完成")
             return 0

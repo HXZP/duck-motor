@@ -141,9 +141,12 @@ bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrat
 --bitrate 500k          CAN 波特率
 --node 0x01             目标电机业务节点 ID
 --frame-delay-ms 1      OTA CAN 分片帧间隔，单位：毫秒
+--no-post-check         OTA 完成后不检查 App 是否恢复响应
 --allow-unconfigured    允许对 0x7E 发起 OTA，仅用于旧固件或单板调试
 --list-channels         列出 PCAN 通道后退出
 --verbose               打印详细 CAN 帧日志
 ```
 
-脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。未配置电机不允许 OTA，需要先通过管理发现和 UID 配置唯一业务 CAN ID。
+脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。未配置电机不允许 OTA，需要先通过管理发现和 UID 配置唯一业务 CAN ID。默认 post-check 会在已配置节点上读取 App 版本号，确认 App 已恢复响应。
+
+OTA app 镜像会由脚本自动追加 `128` 字节业务头，业务头包含 App 长度和 CRC16-CCITT。Boot 会在首个数据包校验业务头，业务头通过后才擦除 App 区；写入完成后再次读取 App Flash 计算 CRC16，校验通过后才清除 OTA 标志并跳转 App。当前 Boot 启动跳 App 前只检查向量表合法性，不做每次启动整包 CRC16 校验。

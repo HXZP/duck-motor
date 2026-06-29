@@ -16,6 +16,15 @@ PAD = 0x1A
 PACKET_SIZE = 128
 PACKET_1K_SIZE = 1024
 BOOT_BUSINESS_HEADER_SIZE = 128
+BOOT_OTA_MAGIC = b"MOTOR_DUCK_OTA\0\0"
+BOOT_OTA_HEADER_VERSION = 1
+BOOT_OTA_MAGIC_OFFSET = 0
+BOOT_OTA_MAGIC_SIZE = 16
+BOOT_OTA_VERSION_OFFSET = 16
+BOOT_OTA_HEADER_SIZE_OFFSET = 17
+BOOT_OTA_HEADER_CRC16_OFFSET = 18
+BOOT_OTA_APP_SIZE_OFFSET = 20
+BOOT_OTA_APP_CRC16_OFFSET = 24
 
 
 def crc16_ccitt(data: bytes | bytearray) -> int:
@@ -115,5 +124,16 @@ def build_boot_ota_payload(app_image: bytes) -> bytes:
     """
 
     header = bytearray(BOOT_BUSINESS_HEADER_SIZE)
-    header[0:16] = b"MOTOR_DUCK_OTA\0\0"
+    header[BOOT_OTA_MAGIC_OFFSET : BOOT_OTA_MAGIC_OFFSET + BOOT_OTA_MAGIC_SIZE] = BOOT_OTA_MAGIC
+    header[BOOT_OTA_VERSION_OFFSET] = BOOT_OTA_HEADER_VERSION
+    header[BOOT_OTA_HEADER_SIZE_OFFSET] = BOOT_BUSINESS_HEADER_SIZE
+    header[BOOT_OTA_APP_SIZE_OFFSET : BOOT_OTA_APP_SIZE_OFFSET + 4] = len(app_image).to_bytes(
+        4, "little"
+    )
+    header[BOOT_OTA_APP_CRC16_OFFSET : BOOT_OTA_APP_CRC16_OFFSET + 2] = crc16_ccitt(
+        app_image
+    ).to_bytes(2, "little")
+    header[BOOT_OTA_HEADER_CRC16_OFFSET : BOOT_OTA_HEADER_CRC16_OFFSET + 2] = crc16_ccitt(
+        header
+    ).to_bytes(2, "little")
     return bytes(header) + app_image
