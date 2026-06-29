@@ -55,6 +55,7 @@ class OtaConfig:
     post_timeout_s: float
     cancel_first: bool
     post_check: bool
+    allow_unconfigured: bool
     verbose: bool
     dll_path: Path | None
 
@@ -424,6 +425,7 @@ def parse_args(argv: list[str]) -> OtaConfig:
     parser.add_argument("--dll", type=Path, default=None, help="PCANBasic.dll 路径")
     parser.add_argument("--no-cancel-first", action="store_true", help="启动前不发送取消序列")
     parser.add_argument("--no-post-check", action="store_true", help="完成后不等待 App 管理上报")
+    parser.add_argument("--allow-unconfigured", action="store_true", help="允许对未配置管理节点 0x7E 发起 OTA")
     parser.add_argument("--verbose", action="store_true", help="打印详细 CAN 帧日志")
     parser.add_argument("--list-channels", action="store_true", help="列出 PCAN 通道后退出")
 
@@ -439,6 +441,13 @@ def parse_args(argv: list[str]) -> OtaConfig:
     if not firmware_path.exists():
         raise FileNotFoundError(f"OTA 固件不存在: {firmware_path}")
 
+    if (args.node == DEFAULT_NODE_ID) and (not args.allow_unconfigured):
+        raise ValueError(
+            "默认禁止对未配置管理节点 0x7E 执行 OTA；"
+            "请先通过 UID 配置业务 CAN ID 后使用 --node <业务ID>，"
+            "单板调试旧固件时可显式添加 --allow-unconfigured"
+        )
+
     return OtaConfig(
         firmware_path=firmware_path,
         channel=parse_channel(args.channel),
@@ -451,6 +460,7 @@ def parse_args(argv: list[str]) -> OtaConfig:
         post_timeout_s=args.post_timeout_s,
         cancel_first=not args.no_cancel_first,
         post_check=not args.no_post_check,
+        allow_unconfigured=args.allow_unconfigured,
         verbose=args.verbose,
         dll_path=args.dll,
     )

@@ -32,6 +32,27 @@ static volatile uint8_t can_protocol_rx_write_index = 0u;
 static volatile uint8_t can_protocol_rx_read_index = 0u;
 static volatile uint8_t can_protocol_rx_overflow_flag = 0u;
 static uint16_t can_protocol_node_id = CAN_PROTOCOL_DEFAULT_NODE_ID;
+static uint8_t can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_NO;
+
+/**
+ * @brief 判断节点 ID 是否允许作为已配置业务节点 ID。
+ * @param node_id 待检查节点 ID，单位：无。
+ * @return uint8_t 合法返回 1，否则返回 0。
+ */
+static uint8_t can_protocol_is_valid_configured_node_id(uint32_t node_id)
+{
+    if ((node_id < USER_INFO_CAN_ID_MIN) || (node_id > USER_INFO_CAN_ID_MAX))
+    {
+        return 0u;
+    }
+
+    if (node_id == USER_INFO_MANAGE_CAN_ID)
+    {
+        return 0u;
+    }
+
+    return 1u;
+}
 
 /**
  * @brief 规范化节点 ID。
@@ -245,13 +266,17 @@ void can_protocol_init(void)
 {
     user_info_data_t info;
 
-    if (UserInfo_Load(&info) == USER_INFO_OK)
+    if ((UserInfo_Load(&info) == USER_INFO_OK) &&
+        (info.can_configured == USER_INFO_CAN_CONFIGURED_YES) &&
+        (can_protocol_is_valid_configured_node_id(info.can_id) != 0u))
     {
         can_protocol_node_id = can_protocol_normalize_node_id(info.can_id);
+        can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_YES;
     }
     else
     {
         can_protocol_node_id = CAN_PROTOCOL_DEFAULT_NODE_ID;
+        can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_NO;
     }
 
     can_protocol_apply_filter();
@@ -303,6 +328,11 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
     if (OtaProcess_IsTransferEnabled() != 0u)
     {
         OtaProcess_PushRxBytes(rx_data, rxframe.DLC);
+        return;
+    }
+
+    if (can_protocol_is_configured == USER_INFO_CAN_CONFIGURED_NO)
+    {
         return;
     }
 

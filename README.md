@@ -122,16 +122,16 @@ bazelisk run //scripts:flash_full -- --flash-exe "C:\Program Files\SEGGER\JLink_
 bazelisk build //:firmware
 ```
 
-通过 PCAN-USB 执行 OTA：
+通过 PCAN-USB 执行 OTA，目标电机需要已经配置唯一业务 CAN ID。以下示例升级节点 `0x01`：
 
 ```powershell
-python .\scripts\pcan_ota.py --file .\bazel-bin\ota_app_release.bin --bitrate 500k --node 0x7E --frame-delay-ms 1
+python .\scripts\pcan_ota.py --file .\bazel-bin\ota_app_release.bin --bitrate 500k --node 0x01 --frame-delay-ms 1
 ```
 
 也可以通过 Bazel 运行：
 
 ```powershell
-bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrate 500k --node 0x7E --frame-delay-ms 1
+bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrate 500k --node 0x01 --frame-delay-ms 1
 ```
 
 常用参数：
@@ -139,10 +139,11 @@ bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrat
 ```text
 --channel auto          自动选择空闲 PCAN 通道
 --bitrate 500k          CAN 波特率
---node 0x7E             Boot/App 管理节点 ID
+--node 0x01             目标电机业务节点 ID
 --frame-delay-ms 1      OTA CAN 分片帧间隔，单位：毫秒
+--allow-unconfigured    允许对 0x7E 发起 OTA，仅用于旧固件或单板调试
 --list-channels         列出 PCAN 通道后退出
 --verbose               打印详细 CAN 帧日志
 ```
 
-脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。
+脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。未配置电机不允许 OTA，需要先通过管理发现和 UID 配置唯一业务 CAN ID。

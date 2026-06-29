@@ -1246,15 +1246,15 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
         return;
     }
 
+    if (can_protocol_is_configured == USER_INFO_CAN_CONFIGURED_NO)
+    {
+        return;
+    }
+
     if ((rxframe.StdId == can_protocol_get_ota_control_std_id()) &&
         (can_protocol_is_ota_start_request(rxframe, rx_data) != 0u))
     {
         can_protocol_enter_boot_ota(CAN_PROTOCOL_CMD_ENTER_BOOT_OTA);
-        return;
-    }
-
-    if (can_protocol_is_configured == USER_INFO_CAN_CONFIGURED_NO)
-    {
         return;
     }
 
