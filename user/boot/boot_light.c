@@ -3,10 +3,8 @@
 #include "main.h"
 #include "stm32f1xx_hal.h"
 
-#define BOOT_LIGHT_STANDBY_PERIOD_MS              1400u   /**< 待机灯效周期，单位：毫秒。 */
-#define BOOT_LIGHT_STANDBY_FIRST_ON_END_MS        80u     /**< 待机第一段亮灯结束时间，单位：毫秒。 */
-#define BOOT_LIGHT_STANDBY_SECOND_ON_START_MS     180u    /**< 待机第二段亮灯开始时间，单位：毫秒。 */
-#define BOOT_LIGHT_STANDBY_SECOND_ON_END_MS       260u    /**< 待机第二段亮灯结束时间，单位：毫秒。 */
+#define BOOT_LIGHT_STANDBY_PERIOD_MS              1000u   /**< 待机灯效周期，单位：毫秒。 */
+#define BOOT_LIGHT_STANDBY_ON_TIME_MS             500u    /**< 待机亮灯时间，单位：毫秒。 */
 #define BOOT_LIGHT_UPGRADING_ON_TIME_MS           100u    /**< 升级亮灯时间，单位：毫秒。 */
 #define BOOT_LIGHT_UPGRADING_PERIOD_MS            200u    /**< 升级灯效周期，单位：毫秒。 */
 
@@ -47,13 +45,7 @@ static uint8_t boot_light_calc_standby_enabled(uint32_t elapsed_ms)
 {
     uint32_t phase_ms = elapsed_ms % BOOT_LIGHT_STANDBY_PERIOD_MS;
 
-    if (phase_ms < BOOT_LIGHT_STANDBY_FIRST_ON_END_MS)
-    {
-        return 1u;
-    }
-
-    if ((phase_ms >= BOOT_LIGHT_STANDBY_SECOND_ON_START_MS) &&
-        (phase_ms < BOOT_LIGHT_STANDBY_SECOND_ON_END_MS))
+    if (phase_ms < BOOT_LIGHT_STANDBY_ON_TIME_MS)
     {
         return 1u;
     }

@@ -84,6 +84,8 @@ Revision: $Rev: 12847 $
 
 #define SEGGER_RTT_MODE_DEFAULT                   SEGGER_RTT_MODE_NO_BLOCK_SKIP // Mode for pre-initialized terminal channel (buffer 0)
 
+#define SEGGER_RTT_SECTION                        ".rtt" // Place RTT control block and buffers at a fixed RAM address
+
 #define USE_RTT_ASM                               (0)     // Use assembler version of SEGGER_RTT.c when 1 
 
 /*********************************************************************

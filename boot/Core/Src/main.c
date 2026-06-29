@@ -36,6 +36,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define BOOT_DEBUG_LOG_DELAY_MS    300u
 
 /* USER CODE END PD */
 
@@ -53,11 +54,58 @@
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+static void Boot_PrintResetCause(void);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+ * @brief 打印并清除 Boot 复位原因。
+ * @return void
+ */
+static void Boot_PrintResetCause(void)
+{
+  uint32_t reset_csr;
+
+  reset_csr = RCC->CSR;
+  printf("Boot start\r\n");
+  printf("Boot reset csr=0x%08lX flags:", (unsigned long)reset_csr);
+
+  if ((reset_csr & RCC_CSR_LPWRRSTF) != 0u)
+  {
+    printf(" LPWR");
+  }
+
+  if ((reset_csr & RCC_CSR_WWDGRSTF) != 0u)
+  {
+    printf(" WWDG");
+  }
+
+  if ((reset_csr & RCC_CSR_IWDGRSTF) != 0u)
+  {
+    printf(" IWDG");
+  }
+
+  if ((reset_csr & RCC_CSR_SFTRSTF) != 0u)
+  {
+    printf(" SW");
+  }
+
+  if ((reset_csr & RCC_CSR_PORRSTF) != 0u)
+  {
+    printf(" POR");
+  }
+
+  if ((reset_csr & RCC_CSR_PINRSTF) != 0u)
+  {
+    printf(" PIN");
+  }
+
+  printf("\r\n");
+  __HAL_RCC_CLEAR_RESET_FLAGS();
+  HAL_Delay(BOOT_DEBUG_LOG_DELAY_MS);
+}
 
 /* USER CODE END 0 */
 
@@ -94,6 +142,7 @@ int main(void)
   MX_CAN_Init();
   /* USER CODE BEGIN 2 */
   log_init();
+  Boot_PrintResetCause();
   can_protocol_init();
   OtaProcess_Init();
   /* USER CODE END 2 */

@@ -81,13 +81,16 @@ void User_Main(void)
 
     s_user_main_started = 1U;
 
+    __enable_irq();
     log_init();
+    printf("App start\r\n");
     AppLight_Init();
     I2C_Init();
     as5600Init();
     foc_root_init();
     can_protocol_init();
     user_main_create_tasks();
+    printf("App init done\r\n");
 
     while (1)
     {

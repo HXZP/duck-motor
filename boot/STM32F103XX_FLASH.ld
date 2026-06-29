@@ -13,7 +13,8 @@ ENTRY(Reset_Handler)
 
 MEMORY
 {
-RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 20K
+RTT_RAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 0x600
+RAM (xrw)      : ORIGIN = 0x20000600, LENGTH = 0x4A00
 FLASH (rx)     : ORIGIN = 0x08000000, LENGTH = 17K
 }
 
@@ -24,6 +25,13 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 
 SECTIONS
 {
+  .rtt (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.rtt))
+    . = ALIGN(4);
+  } >RTT_RAM
+
   .isr_vector :
   {
     . = ALIGN(4);

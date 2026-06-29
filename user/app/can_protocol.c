@@ -4,6 +4,7 @@
 #include "app/app_version.h"
 #include "app/flash.h"
 #include "app/foc_init.h"
+#include "app/log.h"
 #include "common/chip_uid.h"
 
 #include <string.h>
@@ -15,6 +16,7 @@
 #define CAN_PROTOCOL_MANAGE_IDENTIFY_MAX_S           60u
 #define CAN_PROTOCOL_OTA_START_DLC                   4u
 #define CAN_PROTOCOL_REPORT_CONFIG_DLC               4u
+#define CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS      1000u
 
 /**
  * @brief CAN 接收帧缓存。
@@ -32,6 +34,12 @@ static uint32_t can_protocol_next_manage_report_tick_ms = 0u;
 static uint8_t can_protocol_report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
 static uint32_t can_protocol_report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
 static uint32_t can_protocol_next_motor_report_tick_ms = 0u;
+static uint32_t can_protocol_next_unconfigured_log_tick_ms = 0u;
+static uint32_t can_protocol_tx_ok_count = 0u;
+static uint32_t can_protocol_tx_fail_count = 0u;
+static uint32_t can_protocol_rx_count = 0u;
+static uint32_t can_protocol_manage_report_count = 0u;
+static uint32_t can_protocol_last_tx_error = 0u;
 
 static can_protocol_rx_frame_t can_protocol_rx_queue[CAN_PROTOCOL_RX_QUEUE_LENGTH];
 static volatile uint8_t can_protocol_rx_write_index = 0u;
@@ -213,6 +221,7 @@ static HAL_StatusTypeDef can_protocol_send_frame(uint16_t std_id, const uint8_t 
     CAN_TxHeaderTypeDef tx_header = {0};
     uint32_t tx_mailbox = 0u;
     uint8_t tx_data[8] = {0};
+    HAL_StatusTypeDef status;
 
     if (dlc > CAN_PROTOCOL_FULL_DLC)
     {
@@ -230,7 +239,23 @@ static HAL_StatusTypeDef can_protocol_send_frame(uint16_t std_id, const uint8_t 
     tx_header.RTR = CAN_RTR_DATA;
     tx_header.DLC = dlc;
 
-    return HAL_CAN_AddTxMessage(&hcan, &tx_header, tx_data, &tx_mailbox);
+    status = HAL_CAN_AddTxMessage(&hcan, &tx_header, tx_data, &tx_mailbox);
+    if (status == HAL_OK)
+    {
+        can_protocol_tx_ok_count++;
+    }
+    else
+    {
+        can_protocol_tx_fail_count++;
+        can_protocol_last_tx_error = HAL_CAN_GetError(&hcan);
+        printf("CAN tx fail: id=0x%03X status=%d err=0x%08lX state=%lu\r\n",
+               std_id,
+               (int)status,
+               (unsigned long)can_protocol_last_tx_error,
+               (unsigned long)HAL_CAN_GetState(&hcan));
+    }
+
+    return status;
 }
 
 /**
@@ -473,6 +498,7 @@ static uint8_t can_protocol_store_report_config(uint32_t enabled, uint32_t perio
 static HAL_StatusTypeDef can_protocol_config_filter_bank(uint32_t bank, uint16_t std_id)
 {
     CAN_FilterTypeDef filter = {0};
+    HAL_StatusTypeDef status;
 
     filter.FilterBank = bank;
     filter.FilterMode = CAN_FILTERMODE_IDMASK;
@@ -485,7 +511,17 @@ static HAL_StatusTypeDef can_protocol_config_filter_bank(uint32_t bank, uint16_t
     filter.FilterActivation = ENABLE;
     filter.SlaveStartFilterBank = 14;
 
-    return HAL_CAN_ConfigFilter(&hcan, &filter);
+    status = HAL_CAN_ConfigFilter(&hcan, &filter);
+    if (status != HAL_OK)
+    {
+        printf("CAN filter fail: bank=%lu id=0x%03X status=%d err=0x%08lX\r\n",
+               (unsigned long)bank,
+               std_id,
+               (int)status,
+               (unsigned long)HAL_CAN_GetError(&hcan));
+    }
+
+    return status;
 }
 
 /**
@@ -494,6 +530,8 @@ static HAL_StatusTypeDef can_protocol_config_filter_bank(uint32_t bank, uint16_t
  */
 static HAL_StatusTypeDef can_protocol_apply_filter(void)
 {
+    HAL_StatusTypeDef status;
+
     HAL_CAN_Stop(&hcan);
 
     if (can_protocol_config_filter_bank(0u, can_protocol_get_manage_command_std_id()) != HAL_OK)
@@ -511,12 +549,32 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
         return HAL_ERROR;
     }
 
-    if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
+    status = HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING);
+    if (status != HAL_OK)
     {
+        printf("CAN notify fail: status=%d err=0x%08lX\r\n",
+               (int)status,
+               (unsigned long)HAL_CAN_GetError(&hcan));
         return HAL_ERROR;
     }
 
-    return HAL_CAN_Start(&hcan);
+    status = HAL_CAN_Start(&hcan);
+    if (status != HAL_OK)
+    {
+        printf("CAN start fail: status=%d err=0x%08lX state=%lu\r\n",
+               (int)status,
+               (unsigned long)HAL_CAN_GetError(&hcan),
+               (unsigned long)HAL_CAN_GetState(&hcan));
+        return HAL_ERROR;
+    }
+
+    printf("CAN filter ok: manage=0x%03X cmd=0x%03X ota=0x%03X state=%lu\r\n",
+           can_protocol_get_manage_command_std_id(),
+           can_protocol_get_command_std_id(),
+           can_protocol_get_ota_control_std_id(),
+           (unsigned long)HAL_CAN_GetState(&hcan));
+
+    return HAL_OK;
 }
 
 /**
@@ -821,7 +879,10 @@ static void can_protocol_send_manage_report(void)
     can_protocol_encode_uint32(&report_data[3], can_protocol_short_uid);
     report_data[7] = 0u;
 
-    can_protocol_send_frame(can_protocol_get_manage_report_std_id(), report_data, CAN_PROTOCOL_FULL_DLC);
+    if (can_protocol_send_frame(can_protocol_get_manage_report_std_id(), report_data, CAN_PROTOCOL_FULL_DLC) == HAL_OK)
+    {
+        can_protocol_manage_report_count++;
+    }
 }
 
 /**
@@ -832,9 +893,13 @@ static void can_protocol_enter_unconfigured_state(void)
 {
     can_protocol_node_id = CAN_PROTOCOL_MANAGE_NODE_ID;
     can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_NO;
+    can_protocol_next_unconfigured_log_tick_ms = HAL_GetTick() + CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS;
     AppLight_SetMode(APP_LIGHT_MODE_UNCONFIGURED);
     foc_output_enable(0u);
     foc_set_state(&foc, Foc_Shutdown);
+    printf("CAN node unconfigured: manage_id=0x%02X uid=0x%08lX\r\n",
+           CAN_PROTOCOL_MANAGE_NODE_ID,
+           (unsigned long)can_protocol_short_uid);
 }
 
 /**
@@ -846,9 +911,15 @@ static void can_protocol_enter_configured_state(uint16_t node_id)
 {
     can_protocol_node_id = node_id;
     can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_YES;
+    can_protocol_next_unconfigured_log_tick_ms = 0u;
     AppLight_SetMode(APP_LIGHT_MODE_RUNNING);
     foc_output_enable(1u);
     foc_set_state(&foc, Foc_Working);
+    printf("CAN node configured: node=0x%02X uid=0x%08lX report=%u period=%lu ms\r\n",
+           can_protocol_node_id,
+           (unsigned long)can_protocol_short_uid,
+           can_protocol_report_enabled,
+           (unsigned long)can_protocol_report_period_ms);
 }
 
 /**
@@ -1008,6 +1079,9 @@ void can_protocol_init(void)
     uint32_t now_ms;
 
     can_protocol_short_uid = ChipUid_GetShortId();
+    printf("CAN protocol init: app=%s uid=0x%08lX\r\n",
+           AppVersion_GetString(),
+           (unsigned long)can_protocol_short_uid);
 
     if ((Load_Recoder(&data) != 0u) &&
         (data.can_configured == USER_INFO_CAN_CONFIGURED_YES) &&
@@ -1024,7 +1098,10 @@ void can_protocol_init(void)
 
     now_ms = HAL_GetTick();
     can_protocol_schedule_manage_report(now_ms);
-    can_protocol_apply_filter();
+    if (can_protocol_apply_filter() != HAL_OK)
+    {
+        printf("CAN protocol init filter failed\r\n");
+    }
 }
 
 /**
@@ -1035,12 +1112,24 @@ void can_protocol_poll(void)
 {
     uint32_t now_ms;
 
+    now_ms = HAL_GetTick();
     if (can_protocol_is_configured == USER_INFO_CAN_CONFIGURED_YES)
     {
         return;
     }
 
-    now_ms = HAL_GetTick();
+    if ((int32_t)(now_ms - can_protocol_next_unconfigured_log_tick_ms) >= 0)
+    {
+        printf("App unconfigured: uid=0x%08lX manage=0x%02X tx_ok=%lu tx_fail=%lu rx=%lu report=%lu\r\n",
+               (unsigned long)can_protocol_short_uid,
+               CAN_PROTOCOL_MANAGE_NODE_ID,
+               (unsigned long)can_protocol_tx_ok_count,
+               (unsigned long)can_protocol_tx_fail_count,
+               (unsigned long)can_protocol_rx_count,
+               (unsigned long)can_protocol_manage_report_count);
+        can_protocol_next_unconfigured_log_tick_ms = now_ms + CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS;
+    }
+
     if ((int32_t)(now_ms - can_protocol_next_manage_report_tick_ms) < 0)
     {
         return;
@@ -1484,6 +1573,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan_handle)
 
     if (HAL_CAN_GetRxMessage(hcan_handle, CAN_RX_FIFO0, &rx_header, rx_data) == HAL_OK)
     {
+        can_protocol_rx_count++;
         can_protocol_rx_queue_push(&rx_header, rx_data);
     }
 }

@@ -55,7 +55,8 @@ ENTRY(Reset_Handler)
 /* Specify the memory areas */
 MEMORY
 {
-RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 20K
+RTT_RAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 0x600
+RAM (xrw)      : ORIGIN = 0x20000600, LENGTH = 0x4A00
 FLASH (rx)      : ORIGIN = 0x8004400, LENGTH = 46K
 }
 
@@ -69,6 +70,13 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Define output sections */
 SECTIONS
 {
+  .rtt (NOLOAD) :
+  {
+    . = ALIGN(4);
+    KEEP(*(.rtt))
+    . = ALIGN(4);
+  } >RTT_RAM
+
   /* The startup code goes first into FLASH */
   .isr_vector :
   {

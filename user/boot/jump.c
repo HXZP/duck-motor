@@ -119,7 +119,8 @@ uint8_t BootJump_ToApplication(uint32_t app_address)
     SysTick->VAL = 0u;
     SCB->VTOR = app_address;
     __set_MSP(app_stack);
-    __enable_irq();
+    __DSB();
+    __ISB();
 
     app_entry();
     return 0u;

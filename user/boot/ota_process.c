@@ -6,8 +6,10 @@
 #include "boot/log.h"
 #include "boot/ymodem_process.h"
 #include "common/user_info.h"
+#include "stm32f1xx_hal.h"
 
 #define OTA_PROCESS_APP_ADDRESS   YMODEM_PROCESS_APP_ADDRESS
+#define OTA_PROCESS_DEBUG_LOG_DELAY_MS  300u
 
 /**
  * @brief Boot OTA 主状态。
@@ -94,16 +96,21 @@ static void ota_process_prepare_jump_or_ota(void)
     }
 
     printf("Boot ota flag=%lu\r\n", (unsigned long)ota_flag);
+    HAL_Delay(OTA_PROCESS_DEBUG_LOG_DELAY_MS);
     if (ota_flag == USER_INFO_OTA_FLAG_APP)
     {
+        printf("Boot jump app: address=0x%08lX\r\n", (unsigned long)OTA_PROCESS_APP_ADDRESS);
+        HAL_Delay(OTA_PROCESS_DEBUG_LOG_DELAY_MS);
         if (BootJump_ToApplication(OTA_PROCESS_APP_ADDRESS) == 0u)
         {
             printf("App image invalid, stay in boot\r\n");
+            HAL_Delay(OTA_PROCESS_DEBUG_LOG_DELAY_MS);
         }
     }
     else
     {
         printf("OTA flag detected, stay in boot\r\n");
+        HAL_Delay(OTA_PROCESS_DEBUG_LOG_DELAY_MS);
         s_ota_process_ctx.request_pending = 1u;
     }
 

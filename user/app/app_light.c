@@ -5,7 +5,7 @@
 
 #define APP_LIGHT_UNCONFIGURED_ON_TIME_MS       50u     /**< 未配置亮灯时间，单位：毫秒。 */
 #define APP_LIGHT_UNCONFIGURED_PERIOD_MS        2000u   /**< 未配置灯效周期，单位：毫秒。 */
-#define APP_LIGHT_RUNNING_PERIOD_MS             1500u   /**< 运行灯效周期，单位：毫秒。 */
+#define APP_LIGHT_RUNNING_PERIOD_MS             2000u   /**< 运行灯效周期，单位：毫秒。 */
 #define APP_LIGHT_RUNNING_FIRST_ON_END_MS       100u    /**< 运行第一段亮灯结束时间，单位：毫秒。 */
 #define APP_LIGHT_RUNNING_SECOND_ON_START_MS    200u    /**< 运行第二段亮灯开始时间，单位：毫秒。 */
 #define APP_LIGHT_RUNNING_SECOND_ON_END_MS      300u    /**< 运行第二段亮灯结束时间，单位：毫秒。 */
