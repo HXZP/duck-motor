@@ -19,6 +19,7 @@ McuFirmwareInfo = provider(
         "hex": "当前构建类型的 HEX 输出文件。",
         "map": "当前构建类型的 MAP 输出文件。",
         "size": "当前构建类型的 size 输出文件。",
+        "memory": "当前构建类型的 Flash/RAM 内存报告文件。",
         "artifacts": "按构建类型索引的固件输出文件。",
         "compile_commands": "按构建类型索引的 compile_commands.json 文件。",
     },
@@ -39,6 +40,7 @@ def _dedupe(items):
 
     for item in items:
         key = str(item)
+
         if key not in seen:
             seen[key] = True
             result.append(item)
@@ -140,6 +142,7 @@ def _make_common_flags(ctx, dep_copts, defines, includes, hdrs, build_type):
 
     if build_type == "debug":
         common_flags.extend(ctx.attr.debug_copts)
+
         for define in ctx.attr.debug_defines:
             common_flags.append("-D" + define)
     else:
@@ -242,6 +245,7 @@ def _build_firmware_variant(ctx, build_type, srcs, hdrs, defines, includes, dep_
     bin_file = ctx.actions.declare_file(ctx.label.name + "_" + build_type + ".bin")
     hex_file = ctx.actions.declare_file(ctx.label.name + "_" + build_type + ".hex")
     size_file = ctx.actions.declare_file(ctx.label.name + "_" + build_type + ".size.txt")
+    memory_file = ctx.actions.declare_file(ctx.label.name + "_" + build_type + ".memory.txt")
 
     ctx.actions.run(
         inputs = [elf],
@@ -277,6 +281,23 @@ def _build_firmware_variant(ctx, build_type, srcs, hdrs, defines, includes, dep_
         progress_message = "Generating MCU " + build_type + " size report %{label}",
     )
 
+    ctx.actions.run(
+        inputs = [ctx.file.memory_report_tool, elf, ctx.file.linker_script],
+        outputs = [memory_file],
+        executable = ctx.attr.python,
+        arguments = [
+            ctx.file.memory_report_tool.path,
+            _tool_path(ctx, ctx.attr.objdump),
+            elf.path,
+            ctx.file.linker_script.path,
+            "--output",
+            memory_file.path,
+        ],
+        env = _tool_env(ctx),
+        mnemonic = "McuMemoryReport",
+        progress_message = "Generating MCU " + build_type + " memory report %{label}",
+    )
+
     compile_commands = _write_compile_commands(ctx, build_type, compile_command_entries)
 
     return {
@@ -285,6 +306,7 @@ def _build_firmware_variant(ctx, build_type, srcs, hdrs, defines, includes, dep_
         "hex": hex_file,
         "map": map_file,
         "size": size_file,
+        "memory": memory_file,
         "compile_commands": compile_commands,
     }
 
@@ -310,7 +332,7 @@ def _mcu_firmware_impl(ctx):
     selected_artifacts = artifacts[_selected_build_type(ctx)]
     default_files = []
 
-    for key in ["elf", "bin", "hex", "map", "size"]:
+    for key in ["elf", "bin", "hex", "map", "size", "memory"]:
         default_files.append(selected_artifacts[key])
 
     return [
@@ -322,6 +344,7 @@ def _mcu_firmware_impl(ctx):
             hex = selected_artifacts["hex"],
             map = selected_artifacts["map"],
             size = selected_artifacts["size"],
+            memory = selected_artifacts["memory"],
             artifacts = artifacts,
             compile_commands = compile_commands,
         ),
@@ -358,7 +381,13 @@ mcu_firmware = rule(
         "c_compiler": attr.string(default = "arm-none-eabi-gcc"),
         "linker": attr.string(default = "arm-none-eabi-g++"),
         "objcopy": attr.string(default = "arm-none-eabi-objcopy"),
+        "objdump": attr.string(default = "arm-none-eabi-objdump"),
         "size_tool": attr.string(default = "arm-none-eabi-size"),
+        "python": attr.string(default = "python"),
+        "memory_report_tool": attr.label(
+            default = Label("//scripts:print_memory_report.py"),
+            allow_single_file = True,
+        ),
         "size_wrapper": attr.label(
             default = Label("//bazel/mcu:size_wrapper.bat"),
             executable = True,
@@ -510,6 +539,7 @@ def _mcu_firmware_package_impl(ctx):
     package_name = ctx.attr.package_name
     inputs = [
         ctx.file.package_tool,
+        ctx.info_file,
         ctx.file.version_header,
         full_bin,
         ota_app_bin,
@@ -518,11 +548,13 @@ def _mcu_firmware_package_impl(ctx):
         boot_artifacts["elf"],
         boot_artifacts["map"],
         boot_artifacts["size"],
+        boot_artifacts["memory"],
         app_artifacts["bin"],
         app_artifacts["hex"],
         app_artifacts["elf"],
         app_artifacts["map"],
         app_artifacts["size"],
+        app_artifacts["memory"],
     ]
     arguments = [
         ctx.file.package_tool.path,
@@ -572,6 +604,11 @@ def _mcu_firmware_package_impl(ctx):
         "{package}_boot_v{version}.size.txt",
     ))
     arguments.extend(_package_artifact_args(
+        "boot_memory",
+        boot_artifacts["memory"],
+        "{package}_boot_v{version}.memory.txt",
+    ))
+    arguments.extend(_package_artifact_args(
         "app_bin",
         app_artifacts["bin"],
         "{package}_app_v{version}.bin",
@@ -596,12 +633,20 @@ def _mcu_firmware_package_impl(ctx):
         app_artifacts["size"],
         "{package}_app_v{version}.size.txt",
     ))
+    arguments.extend(_package_artifact_args(
+        "app_memory",
+        app_artifacts["memory"],
+        "{package}_app_v{version}.memory.txt",
+    ))
 
     ctx.actions.run(
         inputs = inputs,
         outputs = [output_dir],
         executable = ctx.attr.python,
         arguments = arguments,
+        execution_requirements = {
+            "no-cache": "1",
+        },
         mnemonic = "McuFirmwarePackage",
         progress_message = "Packaging MCU firmware release directory %{label}",
     )

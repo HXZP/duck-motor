@@ -8,7 +8,7 @@
         "--background-index",
         "--completion-style=detailed",
         "--header-insertion=never",
-        "--query-driver=C:/PROGRA~1/Arm/GNUTOO~1/bin/arm-none-eabi-*,C:/Program Files/Arm GNU Toolchain arm-none-eabi/*/bin/arm-none-eabi-*"
+        "--query-driver=C:/Users/13241/.zephyr_ide/toolchains/**/*"
     ],
     "bazel.executable": "C:\\Users\\13241\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Bazel.Bazelisk_Microsoft.Winget.Source_8wekyb3d8bbwe\\bazelisk.exe",
     "cmake.configureOnOpen": false

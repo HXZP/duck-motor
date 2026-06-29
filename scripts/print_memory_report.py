@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import argparse
 import re
 import subprocess
-import sys
 from collections import OrderedDict
+from pathlib import Path
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -58,15 +59,13 @@ def format_used_size(size: int) -> str:
     return f"{size} B"
 
 
-def parse_memory_regions(ld_path: str) -> OrderedDict:
+def parse_memory_regions(ld_path: Path) -> OrderedDict:
     """
     @brief 解析链接脚本中的 MEMORY 区域定义。
     @param ld_path 链接脚本路径。
     @return 返回区域信息有序字典。
     """
-    with open(ld_path, "r", encoding="utf-8", errors="ignore") as file:
-        content = file.read()
-
+    content = ld_path.read_text(encoding="utf-8", errors="ignore")
     match = re.search(r"MEMORY\s*\{(?P<body>.*?)\}", content, re.S)
 
     if match is None:
@@ -94,7 +93,7 @@ def parse_memory_regions(ld_path: str) -> OrderedDict:
     return regions
 
 
-def parse_objdump_sections(objdump_path: str, elf_path: str) -> List[Dict[str, object]]:
+def parse_objdump_sections(objdump_path: str, elf_path: Path) -> List[Dict[str, object]]:
     """
     @brief 解析 objdump -h 输出中的 section 信息。
     @param objdump_path objdump 程序路径。
@@ -102,7 +101,7 @@ def parse_objdump_sections(objdump_path: str, elf_path: str) -> List[Dict[str, o
     @return 返回 section 信息列表。
     """
     result = subprocess.run(
-        [objdump_path, "-h", elf_path],
+        [objdump_path, "-h", str(elf_path)],
         check=True,
         text=True,
         capture_output=True,
@@ -111,7 +110,6 @@ def parse_objdump_sections(objdump_path: str, elf_path: str) -> List[Dict[str, o
     lines = result.stdout.splitlines()
     sections = []
     index = 0
-
     header_pattern = re.compile(
         r"^\s*\d+\s+(?P<name>\S+)\s+(?P<size>[0-9A-Fa-f]+)\s+(?P<vma>[0-9A-Fa-f]+)\s+(?P<lma>[0-9A-Fa-f]+)\s+(?P<fileoff>[0-9A-Fa-f]+)\s+\S+"
     )
@@ -171,7 +169,7 @@ def account_span(regions: OrderedDict, region_name: Optional[str], address: int,
     @param region_name 区域名称。
     @param address 起始地址。
     @param size 区间大小。
-    @return 无返回值。
+    @return 无。
     """
     if (region_name is None) or (size <= 0):
         return
@@ -187,7 +185,7 @@ def accumulate_region_usage(regions: OrderedDict, sections: List[Dict[str, objec
     @brief 根据 section 的 VMA/LMA 统计各区域使用量。
     @param regions 区域信息字典。
     @param sections section 信息列表。
-    @return 无返回值。
+    @return 无。
     """
     for section in sections:
         size = int(section["size"])
@@ -208,47 +206,60 @@ def accumulate_region_usage(regions: OrderedDict, sections: List[Dict[str, objec
                 account_span(regions, lma_region, lma, size)
 
 
-def print_report(regions: OrderedDict) -> None:
+def make_report(regions: OrderedDict) -> str:
     """
-    @brief 输出内存占用报告。
+    @brief 生成内存占用报告文本。
     @param regions 区域信息字典。
-    @return 无返回值。
+    @return 返回报告文本。
     """
-    print("Memory region         Used Size  Region Size  %age Used")
+    lines = ["Memory region         Used Size  Region Size  %age Used"]
 
     for name, region in regions.items():
         used = max(0, region["used_end"] - region["origin"])
         length = region["length"]
         percent = (used * 100.0 / length) if length != 0 else 0.0
-
-        print(
+        lines.append(
             f"{name:>16}: "
             f"{format_used_size(used):>12}  "
             f"{format_region_size(length):>11}  "
             f"{percent:>9.2f}%"
         )
 
+    return "\n".join(lines) + "\n"
 
-def main(argv: List[str]) -> int:
+
+def parse_args() -> argparse.Namespace:
+    """
+    @brief 解析命令行参数。
+    @return 返回命令行参数对象。
+    """
+    parser = argparse.ArgumentParser(description="生成 MCU Flash/RAM 使用报告。")
+    parser.add_argument("objdump", help="arm-none-eabi-objdump 路径。")
+    parser.add_argument("elf", type=Path, help="ELF 文件路径。")
+    parser.add_argument("ld", type=Path, help="链接脚本路径。")
+    parser.add_argument("--output", type=Path, help="报告输出文件路径。")
+    return parser.parse_args()
+
+
+def main() -> int:
     """
     @brief 脚本入口。
-    @param argv 命令行参数列表。
     @return 返回进程退出码。
     """
-    if len(argv) != 4:
-        print("usage: print_memory_report.py <objdump> <elf> <ld>", file=sys.stderr)
-        return 2
-
-    objdump_path = argv[1]
-    elf_path = argv[2]
-    ld_path = argv[3]
-
-    regions = parse_memory_regions(ld_path)
-    sections = parse_objdump_sections(objdump_path, elf_path)
+    args = parse_args()
+    regions = parse_memory_regions(args.ld)
+    sections = parse_objdump_sections(args.objdump, args.elf)
     accumulate_region_usage(regions, sections)
-    print_report(regions)
+    report = make_report(regions)
+
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(report, encoding="utf-8")
+    else:
+        print(report, end="")
+
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    raise SystemExit(main())

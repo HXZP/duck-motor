@@ -21,17 +21,28 @@ release 版本主要输出：
 ```text
 bazel-bin/full_release.bin
 bazel-bin/boot/boot_release.bin
+bazel-bin/boot/boot_release.memory.txt
 bazel-bin/stm32f103/motor_release.bin
+bazel-bin/stm32f103/motor_release.memory.txt
 bazel-bin/ota_app_release.bin
 bazel-bin/firmware_package/motor_duck_v1.0.0/
 ```
 
-`firmware_package` 目录会按 App 版本号命名，并包含带版本号的固件文件和 `manifest.json`：
+Bazel 固件目标会同时生成两类占用报告：
+
+```text
+*.size.txt      arm-none-eabi-size 原始段大小报告
+*.memory.txt    按链接脚本统计的 Flash/RAM 使用量和百分比
+```
+
+`firmware_package` 目录会按 App 版本号命名，并包含带版本号的固件文件、内存报告和 `manifest.json`：
 
 ```text
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_full_v1.0.0.bin
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_boot_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_boot_v1.0.0.memory.txt
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_app_v1.0.0.bin
+bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_app_v1.0.0.memory.txt
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_ota_app_v1.0.0.bin
 bazel-bin/firmware_package/motor_duck_v1.0.0/manifest.json
 ```
@@ -55,7 +66,9 @@ debug 版本主要输出：
 ```text
 bazel-bin/full_debug.bin
 bazel-bin/boot/boot_debug.bin
+bazel-bin/boot/boot_debug.memory.txt
 bazel-bin/stm32f103/motor_debug.bin
+bazel-bin/stm32f103/motor_debug.memory.txt
 bazel-bin/ota_app_debug.bin
 ```
 
@@ -100,3 +113,36 @@ bazelisk run //scripts:flash_full -- --list-only
 ```powershell
 bazelisk run //scripts:flash_full -- --flash-exe "C:\Program Files\SEGGER\JLink_V922\JLink.exe"
 ```
+
+## PCAN OTA
+
+先构建 release 固件：
+
+```powershell
+bazelisk build //:firmware
+```
+
+通过 PCAN-USB 执行 OTA：
+
+```powershell
+python .\scripts\pcan_ota.py --file .\bazel-bin\ota_app_release.bin --bitrate 500k --node 0x7E --frame-delay-ms 1
+```
+
+也可以通过 Bazel 运行：
+
+```powershell
+bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrate 500k --node 0x7E --frame-delay-ms 1
+```
+
+常用参数：
+
+```text
+--channel auto          自动选择空闲 PCAN 通道
+--bitrate 500k          CAN 波特率
+--node 0x7E             Boot/App 管理节点 ID
+--frame-delay-ms 1      OTA CAN 分片帧间隔，单位：毫秒
+--list-channels         列出 PCAN 通道后退出
+--verbose               打印详细 CAN 帧日志
+```
+
+脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。

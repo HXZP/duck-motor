@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-#define CAN_PROTOCOL_RX_QUEUE_LENGTH  (16u)
+#define CAN_PROTOCOL_RX_QUEUE_LENGTH  (128u)
 #define CAN_PROTOCOL_OTA_REQUEST_PREFIX_LEN  (3u)
 #define CAN_PROTOCOL_OTA_REQUEST_LEN         (4u)
 #define CAN_PROTOCOL_SEND_TIMEOUT_MS  (10u)

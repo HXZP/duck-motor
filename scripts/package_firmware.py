@@ -7,7 +7,8 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
+from typing import List
 
 
 def read_version_define(text: str, name: str) -> int:
@@ -50,6 +51,7 @@ def calc_sha256(path: Path) -> str:
     with path.open("rb") as file:
         while True:
             chunk = file.read(1024 * 1024)
+
             if not chunk:
                 break
 
@@ -100,6 +102,43 @@ def write_manifest(package_dir: Path, manifest: Dict[str, object]) -> None:
     )
 
 
+def make_memory_report_title(role: str) -> str:
+    """
+    @brief 根据产物角色生成内存报告标题。
+    @param role 产物角色名称。
+    @return 返回报告标题。
+    """
+    if role == "boot_memory":
+        return "BOOT MEMORY REPORT"
+
+    if role == "app_memory":
+        return "APP MEMORY REPORT"
+
+    return role.upper() + " REPORT"
+
+
+def print_memory_reports(artifacts: List[List[str]]) -> None:
+    """
+    @brief 在终端输出 boot 和 app 的内存占用报告。
+    @param artifacts 产物参数列表，格式为 role、source、output_template。
+    @return 无。
+    """
+    for artifact in artifacts:
+        role = artifact[0]
+
+        if role not in ["boot_memory", "app_memory"]:
+            continue
+
+        source = Path(artifact[1])
+
+        if not source.is_file():
+            raise FileNotFoundError("找不到内存报告: " + str(source))
+
+        print("")
+        print(make_memory_report_title(role))
+        print(source.read_text(encoding="utf-8"), end="")
+
+
 def parse_args() -> argparse.Namespace:
     """
     @brief 解析命令行参数。
@@ -136,6 +175,7 @@ def main() -> int:
     package_dir.mkdir(parents=True, exist_ok=True)
 
     artifacts = []
+
     for artifact in args.artifact:
         artifacts.append(copy_artifact(package_dir, args.package_name, version, artifact))
 
@@ -151,6 +191,7 @@ def main() -> int:
     print("firmware package: " + str(package_dir))
     print("version: " + version)
     print("artifacts: " + str(len(artifacts)))
+    print_memory_reports(args.artifact)
 
     return 0
 

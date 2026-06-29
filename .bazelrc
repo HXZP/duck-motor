@@ -4,6 +4,7 @@ build --action_env=PATH
 build --show_result=20
 build --define=ARM_NONE_EABI_BIN=C:/PROGRA~1/Arm/GNUTOO~1/bin
 build --compilation_mode=opt
+build --workspace_status_command="python scripts/bazel_workspace_status.py"
 
 build:debug --compilation_mode=dbg
 build:release --compilation_mode=opt

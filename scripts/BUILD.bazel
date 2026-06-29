@@ -1,16 +1,34 @@
 load("//scripts:clangd_refresh_rules.bzl", "clangd_refresh_target")
 load("//scripts:bazel_flash_rules.bzl", "bazel_flash_target")
+load("//scripts:pcan_ota_rules.bzl", "pcan_ota_target")
 
 exports_files([
     "bazel_flash.py",
     "bazel_flash_rules.bzl",
+    "bazel_workspace_status.py",
     "clangd_refresh_rules.bzl",
     "copy_file.py",
     "pack.py",
     "package_firmware.py",
+    "pcan_basic.py",
+    "pcan_ota.py",
+    "pcan_ota_rules.bzl",
     "print_memory_report.py",
     "refresh_clangd.py",
+    "ymodem.py",
 ])
+
+pcan_ota_target(
+    name = "pcan_ota",
+    data = [
+        "//:ota_app",
+    ],
+    tools = [
+        "pcan_basic.py",
+        "pcan_ota.py",
+        "ymodem.py",
+    ],
+)
 
 bazel_flash_target(
     name = "flash_full",
