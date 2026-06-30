@@ -5,6 +5,7 @@
 #include "boot/jump.h"
 #include "boot/log.h"
 #include "boot/ymodem_process.h"
+#include "common/ota_info.h"
 #include "common/user_info.h"
 #include "stm32f1xx_hal.h"
 
@@ -83,14 +84,14 @@ static void ota_process_reset_context(void)
 }
 
 /**
- * @brief 根据 userinfo 的 OTA 标志决定是否跳转 App。
+ * @brief 根据 OTA 信息页的标志决定是否跳转 App。
  * @return void
  */
 static void ota_process_prepare_jump_or_ota(void)
 {
     uint32_t ota_flag = USER_INFO_OTA_FLAG_BOOT;
 
-    if (UserInfo_LoadOtaFlag(&ota_flag) != USER_INFO_OK)
+    if (OtaInfo_LoadFlag(&ota_flag) != USER_INFO_OK)
     {
         ota_flag = USER_INFO_OTA_FLAG_BOOT;
     }
@@ -229,10 +230,22 @@ void OtaProcess_Poll(void)
             BootLight_SetMode(BOOT_LIGHT_MODE_STANDBY);
             if (s_ota_process_ctx.ota_result == BOOT_OK)
             {
-                ret = UserInfo_SaveOtaFlag(USER_INFO_OTA_FLAG_APP);
-                if (ret != USER_INFO_OK)
+                int save_ret;
+                ymodem_process_file_info_t file_info;
+
+                ret = YmodemProcess_GetFileInfo(&file_info);
+                if (ret == BOOT_OK)
                 {
-                    printf("OTA flag clear failed: ret=%d\r\n", ret);
+                    save_ret = OtaInfo_SaveAppValid(file_info.payload_size, file_info.app_crc16);
+                }
+                else
+                {
+                    save_ret = USER_INFO_ERR;
+                }
+
+                if (save_ret != USER_INFO_OK)
+                {
+                    printf("OTA info save failed: ret=%d\r\n", save_ret);
                     s_ota_process_ctx.ota_result = BOOT_ERR_VERIFY;
                 }
                 else

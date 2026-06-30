@@ -8,11 +8,12 @@ extern "C" {
 #include <stdint.h>
 
 #include "boot/ymodem_core.h"
+#include "common/flash_layout.h"
 #include "common/user_info.h"
 
-#define YMODEM_PROCESS_APP_ADDRESS              0x08004400u
-#define YMODEM_PROCESS_USER_INFO_ADDRESS        USER_INFO_FLASH_ADDRESS
-#define YMODEM_PROCESS_APP_SIZE                 (YMODEM_PROCESS_USER_INFO_ADDRESS - YMODEM_PROCESS_APP_ADDRESS)
+#define YMODEM_PROCESS_APP_ADDRESS              FLASH_LAYOUT_APP_ADDRESS
+#define YMODEM_PROCESS_OTA_INFO_ADDRESS         FLASH_LAYOUT_OTA_INFO_ADDRESS
+#define YMODEM_PROCESS_APP_SIZE                 FLASH_LAYOUT_APP_SIZE
 #define YMODEM_PROCESS_FLASH_PAGE_SIZE          1024u
 #define YMODEM_PROCESS_SIZE_FIRST_HEAD_PACKET   128u
 #define YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH  128u
@@ -26,6 +27,7 @@ typedef struct
     uint8_t head_packet_info[YMODEM_PROCESS_HEAD_PACKET_INFO_LENGTH]; /**< 首包业务头信息。 */
     int32_t file_size;                                            /**< 文件总长度，单位：字节。 */
     uint32_t payload_size;                                        /**< 实际写入长度，单位：字节。 */
+    uint16_t app_crc16;                                           /**< App 镜像 CRC16-CCITT 校验值，单位：无。 */
 } ymodem_process_file_info_t;
 
 /**

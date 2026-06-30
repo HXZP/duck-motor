@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "foc/foc_core.h"
+#include "common/user_info.h"
 
 typedef enum
 {
@@ -85,6 +86,20 @@ foc_ctrl_mode_t foc_control_mode_get(void);
  * @note 返回值已经过幅值限制，范围为 [-OUT_MAX, OUT_MAX]。
  */
 int32_t foc_current_set_target(int32_t target);
+
+/**
+ * @brief 设置并应用 FOC 基础配置。
+ * @param config FOC 基础配置。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int foc_config_set(const user_info_foc_config_t *config);
+
+/**
+ * @brief 获取当前 FOC 基础配置。
+ * @param config FOC 基础配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int foc_config_get(user_info_foc_config_t *config);
 
 /**
  * @brief 预留的速度环控制接口。

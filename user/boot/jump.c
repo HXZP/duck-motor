@@ -1,12 +1,17 @@
 #include "boot/jump.h"
 
+#include "boot/crc16.h"
 #include "boot/ymodem_process.h"
 #include "can.h"
+#include "common/ota_info.h"
 #include "stm32f1xx_hal.h"
 
 #define BOOT_JUMP_SRAM_START_ADDRESS       0x20000000u
 #define BOOT_JUMP_SRAM_END_ADDRESS         0x20005000u
 
+/**
+ * @brief App 入口函数类型。
+ */
 typedef void (*boot_jump_entry_fn_t)(void);
 
 /**
@@ -56,7 +61,36 @@ static uint8_t boot_jump_is_app_flash_address(uint32_t address)
 }
 
 /**
- * @brief 检查 App 镜像向量表是否有效。
+ * @brief 校验 App 镜像 CRC16。
+ * @param app_address App 起始地址，单位：字节地址。
+ * @return uint8_t 有效返回 1，无效返回 0。
+ */
+static uint8_t boot_jump_is_app_crc_valid(uint32_t app_address)
+{
+    ota_info_data_t ota_info;
+    uint16_t actual_crc16;
+
+    if (OtaInfo_Load(&ota_info) != USER_INFO_OK)
+    {
+        return 0u;
+    }
+
+    if ((ota_info.app_size == 0u) || (ota_info.app_size > YMODEM_PROCESS_APP_SIZE))
+    {
+        return 0u;
+    }
+
+    actual_crc16 = BootCrc16_CcittCalc((const uint8_t *)app_address, ota_info.app_size);
+    if (actual_crc16 != ota_info.app_crc16)
+    {
+        return 0u;
+    }
+
+    return 1u;
+}
+
+/**
+ * @brief 检查 App 镜像向量表和 CRC 是否有效。
  * @param app_address App 起始地址，单位：字节地址。
  * @return uint8_t 有效返回 1，无效返回 0。
  */
@@ -84,6 +118,11 @@ uint8_t BootJump_IsApplicationValid(uint32_t app_address)
     }
 
     if (boot_jump_is_app_flash_address(reset_handler & ~1u) == 0u)
+    {
+        return 0u;
+    }
+
+    if (boot_jump_is_app_crc_valid(app_address) == 0u)
     {
         return 0u;
     }

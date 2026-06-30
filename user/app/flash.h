@@ -20,6 +20,10 @@ typedef struct
     uint32_t can_configured;   /**< CAN 节点 ID 配置状态，单位：无。 */
     uint32_t report_enabled;   /**< 电机主动上报使能状态，单位：无。 */
     uint32_t report_period_ms; /**< 电机主动上报周期，单位：毫秒。 */
+    uint32_t pole_pairs;       /**< 电机极对数，单位：个。 */
+    uint32_t master_voltage_mv; /**< 母线电压，单位：毫伏。 */
+    uint32_t control_hz;       /**< FOC 控制频率，单位：Hz。 */
+    uint32_t sensor_hz;        /**< 传感器采样频率，单位：Hz。 */
 } recoder_data;
 
 /**
@@ -60,5 +64,19 @@ uint8_t Load_OtaFlag(uint32_t *ota_flag);
  * @return void
  */
 void Save_OtaFlag(uint32_t ota_flag);
+
+/**
+ * @brief 读取 FOC 持久化配置。
+ * @param config FOC 配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int Flash_LoadFocConfig(user_info_foc_config_t *config);
+
+/**
+ * @brief 保存 FOC 持久化配置。
+ * @param config 待保存的 FOC 配置。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int Flash_SaveFocConfig(const user_info_foc_config_t *config);
 
 #endif

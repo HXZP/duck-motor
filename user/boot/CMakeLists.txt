@@ -1,6 +1,7 @@
 add_library(user_boot STATIC)
 
 target_sources(user_boot PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../common/ota_info.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/../common/user_info.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/can_protocol.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/crc16.c"

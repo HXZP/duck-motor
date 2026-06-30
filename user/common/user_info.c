@@ -4,6 +4,8 @@
 
 #include <string.h>
 
+static uint8_t s_user_info_page_buffer[USER_INFO_FLASH_PAGE_SIZE];
+
 /**
  * @brief 初始化 CRC32 计算值。
  * @return uint32_t CRC32 初始值，单位：无。
@@ -58,6 +60,26 @@ static uint32_t user_info_crc32_update(uint32_t crc, const uint8_t *data, uint32
 static uint32_t user_info_crc32_final(uint32_t crc)
 {
     return crc ^ 0xFFFFFFFFu;
+}
+
+/**
+ * @brief 计算 CRC32 校验值。
+ * @param data 输入数据缓冲区。
+ * @param len 输入数据长度，单位：字节。
+ * @return uint32_t CRC32 校验值，单位：无。
+ */
+uint32_t UserInfo_CalcCrc32(const uint8_t *data, uint32_t len)
+{
+    uint32_t crc;
+
+    if ((data == NULL) && (len != 0u))
+    {
+        return 0u;
+    }
+
+    crc = user_info_crc32_init();
+    crc = user_info_crc32_update(crc, data, len);
+    return user_info_crc32_final(crc);
 }
 
 /**
@@ -217,42 +239,6 @@ static int user_info_erase_page(void)
 }
 
 /**
- * @brief 将记录写入用户信息 Flash 页。
- * @param record 用户信息记录。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR。
- */
-static int user_info_program_record(const user_info_record_t *record)
-{
-    uint32_t offset;
-    const uint8_t *data;
-
-    if (record == NULL)
-    {
-        return USER_INFO_ERR_PARAM;
-    }
-
-    data = (const uint8_t *)record;
-    for (offset = 0u; offset < (uint32_t)sizeof(*record); offset += 4u)
-    {
-        uint32_t word = 0xFFFFFFFFu;
-        uint32_t chunk = (uint32_t)sizeof(*record) - offset;
-
-        if (chunk > 4u)
-        {
-            chunk = 4u;
-        }
-
-        memcpy(&word, &data[offset], chunk);
-        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, USER_INFO_FLASH_ADDRESS + offset, word) != HAL_OK)
-        {
-            return USER_INFO_ERR;
-        }
-    }
-
-    return USER_INFO_OK;
-}
-
-/**
  * @brief 获取默认用户信息。
  * @param info 用户信息输出缓冲区。
  * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
@@ -273,6 +259,101 @@ int UserInfo_GetDefault(user_info_data_t *info)
     info->report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
 
     return USER_INFO_OK;
+}
+
+/**
+ * @brief 获取默认 FOC 配置。
+ * @param config FOC 配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_GetDefaultFocConfig(user_info_foc_config_t *config)
+{
+    if (config == NULL)
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    config->pole_pairs = USER_INFO_DEFAULT_POLE_PAIRS;
+    config->master_voltage_mv = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV;
+    config->control_hz = USER_INFO_DEFAULT_CONTROL_HZ;
+    config->sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
+    return USER_INFO_OK;
+}
+
+/**
+ * @brief 校验 FOC 配置是否在数值合法范围内。
+ * @param config 待校验的 FOC 配置。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_ValidateFocConfig(const user_info_foc_config_t *config)
+{
+    if (config == NULL)
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((config->pole_pairs < USER_INFO_MIN_POLE_PAIRS) ||
+        (config->pole_pairs > USER_INFO_MAX_POLE_PAIRS))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((config->master_voltage_mv < USER_INFO_MIN_MASTER_VOLTAGE_MV) ||
+        (config->master_voltage_mv > USER_INFO_MAX_MASTER_VOLTAGE_MV))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((config->control_hz < USER_INFO_MIN_LOOP_HZ) ||
+        (config->control_hz > USER_INFO_MAX_LOOP_HZ))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((config->sensor_hz < USER_INFO_MIN_LOOP_HZ) ||
+        (config->sensor_hz > USER_INFO_MAX_LOOP_HZ))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    return USER_INFO_OK;
+}
+
+/**
+ * @brief 归一化 FOC 配置。
+ * @param config 待归一化的 FOC 配置。
+ * @return void
+ */
+void UserInfo_NormalizeFocConfig(user_info_foc_config_t *config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    if ((config->pole_pairs < USER_INFO_MIN_POLE_PAIRS) ||
+        (config->pole_pairs > USER_INFO_MAX_POLE_PAIRS))
+    {
+        config->pole_pairs = USER_INFO_DEFAULT_POLE_PAIRS;
+    }
+
+    if ((config->master_voltage_mv < USER_INFO_MIN_MASTER_VOLTAGE_MV) ||
+        (config->master_voltage_mv > USER_INFO_MAX_MASTER_VOLTAGE_MV))
+    {
+        config->master_voltage_mv = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV;
+    }
+
+    if ((config->control_hz < USER_INFO_MIN_LOOP_HZ) ||
+        (config->control_hz > USER_INFO_MAX_LOOP_HZ))
+    {
+        config->control_hz = USER_INFO_DEFAULT_CONTROL_HZ;
+    }
+
+    if ((config->sensor_hz < USER_INFO_MIN_LOOP_HZ) ||
+        (config->sensor_hz > USER_INFO_MAX_LOOP_HZ))
+    {
+        config->sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
+    }
 }
 
 /**
@@ -310,6 +391,7 @@ int UserInfo_Save(const user_info_data_t *info)
 {
     HAL_StatusTypeDef status;
     user_info_record_t record;
+    uint32_t offset;
     int ret;
 
     if (info == NULL)
@@ -323,6 +405,11 @@ int UserInfo_Save(const user_info_data_t *info)
         return ret;
     }
 
+    memcpy(s_user_info_page_buffer,
+           (const uint8_t *)USER_INFO_FLASH_ADDRESS,
+           USER_INFO_FLASH_PAGE_SIZE);
+    memcpy(s_user_info_page_buffer, &record, sizeof(record));
+
     status = HAL_FLASH_Unlock();
     if (status != HAL_OK)
     {
@@ -334,11 +421,81 @@ int UserInfo_Save(const user_info_data_t *info)
     ret = user_info_erase_page();
     if (ret == USER_INFO_OK)
     {
-        ret = user_info_program_record(&record);
+        for (offset = 0u; offset < USER_INFO_FLASH_PAGE_SIZE; offset += 4u)
+        {
+            uint32_t word;
+
+            memcpy(&word, &s_user_info_page_buffer[offset], sizeof(word));
+            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, USER_INFO_FLASH_ADDRESS + offset, word) != HAL_OK)
+            {
+                ret = USER_INFO_ERR;
+                break;
+            }
+        }
     }
 
     HAL_FLASH_Lock();
     return ret;
+}
+
+/**
+ * @brief 更新用户信息页尾部扩展数据。
+ * @param page_offset 页内偏移，单位：字节。
+ * @param data 扩展数据缓冲区。
+ * @param len 扩展数据长度，单位：字节。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_SavePageTail(uint32_t page_offset, const uint8_t *data, uint32_t len)
+{
+    uint32_t offset;
+
+    if ((data == NULL) && (len != 0u))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((page_offset > USER_INFO_FLASH_PAGE_SIZE) ||
+        (len > (USER_INFO_FLASH_PAGE_SIZE - page_offset)))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    memcpy(s_user_info_page_buffer,
+           (const uint8_t *)USER_INFO_FLASH_ADDRESS,
+           USER_INFO_FLASH_PAGE_SIZE);
+
+    if (len != 0u)
+    {
+        memcpy(&s_user_info_page_buffer[page_offset], data, len);
+    }
+
+    if (HAL_FLASH_Unlock() != HAL_OK)
+    {
+        return USER_INFO_ERR;
+    }
+
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPERR);
+
+    if (user_info_erase_page() != USER_INFO_OK)
+    {
+        HAL_FLASH_Lock();
+        return USER_INFO_ERR;
+    }
+
+    for (offset = 0u; offset < USER_INFO_FLASH_PAGE_SIZE; offset += 4u)
+    {
+        uint32_t word;
+
+        memcpy(&word, &s_user_info_page_buffer[offset], sizeof(word));
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, USER_INFO_FLASH_ADDRESS + offset, word) != HAL_OK)
+        {
+            HAL_FLASH_Lock();
+            return USER_INFO_ERR;
+        }
+    }
+
+    HAL_FLASH_Lock();
+    return USER_INFO_OK;
 }
 
 /**

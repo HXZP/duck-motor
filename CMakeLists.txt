@@ -87,6 +87,7 @@ if(BUILD_APP OR BUILD_BOOT)
                 --app "${CMAKE_SOURCE_DIR}/output/motor/motor.bin"
                 --output "${PACK_OUTPUT_BIN}"
                 --app-offset 0x4400
+                --otainfo-offset 0xF800
                 --userinfo-offset 0xFC00
                 --boot-limit 0x4400
             VERBATIM

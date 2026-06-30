@@ -470,13 +470,6 @@ void foc_control(foc_t *foc)
     foc_get_pwm_duty(&foc->pwm_duty, &foc->output_vector);
     
     foc->cfg->output(foc->pwm_duty.a,foc->pwm_duty.b,foc->pwm_duty.c);
-    
-//    foc->solving.cnt++;
-//    if(foc->solving.cnt >= foc->cfg->control_khz)
-//    {
-//        foc->solving.update_flag = 1;
-//        foc->solving.cnt = 0;
-//    }
 }
 
 int32_t foc_zero_reset(foc_t *foc)

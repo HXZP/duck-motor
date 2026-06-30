@@ -57,7 +57,7 @@ MEMORY
 {
 RTT_RAM (xrw)  : ORIGIN = 0x20000000, LENGTH = 0x600
 RAM (xrw)      : ORIGIN = 0x20000600, LENGTH = 0x4A00
-FLASH (rx)      : ORIGIN = 0x8004400, LENGTH = 46K
+FLASH (rx)      : ORIGIN = 0x8004400, LENGTH = 45K
 }
 
 /* Highest address of the user mode stack */

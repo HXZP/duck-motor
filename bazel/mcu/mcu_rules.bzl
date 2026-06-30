@@ -420,6 +420,8 @@ def _mcu_full_image_impl(ctx):
             out.path,
             "--app-offset",
             ctx.attr.app_offset,
+            "--otainfo-offset",
+            ctx.attr.otainfo_offset,
             "--userinfo-offset",
             ctx.attr.userinfo_offset,
             "--boot-limit",
@@ -445,6 +447,7 @@ mcu_full_image = rule(
         "boot": attr.label(providers = [McuFirmwareInfo], mandatory = True),
         "app": attr.label(providers = [McuFirmwareInfo], mandatory = True),
         "app_offset": attr.string(default = "0x4400"),
+        "otainfo_offset": attr.string(default = "0xF800"),
         "userinfo_offset": attr.string(default = "0xFC00"),
         "boot_limit": attr.string(default = "0x4400"),
         "pack_tool": attr.label(

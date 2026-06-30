@@ -175,6 +175,7 @@ static int ymodem_process_verify_business_header(const uint8_t *header, uint32_t
 
     s_ymodem_process_ctx.expected_app_crc16 =
         ymodem_process_read_le16(&header[YMODEM_PROCESS_OTA_APP_CRC_OFFSET]);
+    s_ymodem_process_ctx.file_info.app_crc16 = s_ymodem_process_ctx.expected_app_crc16;
     s_ymodem_process_ctx.business_header_verified = 1u;
     printf("YMODEM business header: payload=%lu crc16=0x%04X\r\n",
            (unsigned long)payload_size,

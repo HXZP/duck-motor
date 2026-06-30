@@ -24,6 +24,12 @@ volatile uint8_t updata_flag = 0U;
 
 static void GPIO_Init(void);
 static int32_t foc_limit_target(int32_t target);
+static uint16_t foc_calc_loop_div(uint16_t target_hz);
+static void foc_apply_config(const user_info_foc_config_t *config);
+
+#define FOC_SCHEDULER_TICK_HZ      4000U
+#define FOC_SPEED_LOOP_HZ          100U
+#define FOC_POSITION_LOOP_HZ       25U
 
 /**
  * @brief 输出三相 PWM 占空比。
@@ -45,15 +51,15 @@ static int32_t foc_current_target = 0;
 
 foc_cfg_t cfg = {
 
-	.pole_pairs = 7,
-	.master_voltage = 12000,
+	.pole_pairs = USER_INFO_DEFAULT_POLE_PAIRS,
+	.master_voltage = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV,
+
+	.control_hz = USER_INFO_DEFAULT_CONTROL_HZ,
+	.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ,
+
 	.pwm_period = 1600,
-	
 	.pwm_hz = 20000,
-	.control_hz = 1000,
-    .control_khz = 1,
-	.sensor_hz = 5000,
-    
+
     .output = foc_output,
     .delay = HAL_Delay,
     .get_angle_rad = as5600GetAngleRadians,
@@ -134,6 +140,103 @@ static int32_t foc_limit_target(int32_t target)
     return target;
 }
 
+/**
+ * @brief 根据目标频率计算调度分频。
+ * @param target_hz 目标频率，单位：Hz。
+ * @return uint16_t 调度分频值，单位：tick。
+ * @note 实际频率不会高于 FOC_SCHEDULER_TICK_HZ，无法整除时向下取最接近的可实现频率。
+ */
+static uint16_t foc_calc_loop_div(uint16_t target_hz)
+{
+    uint32_t div;
+
+    if (target_hz == 0U)
+    {
+        return 1U;
+    }
+
+    if (target_hz >= FOC_SCHEDULER_TICK_HZ)
+    {
+        return 1U;
+    }
+
+    div = (FOC_SCHEDULER_TICK_HZ + target_hz - 1U) / target_hz;
+    if (div == 0U)
+    {
+        return 1U;
+    }
+
+    if (div > UINT16_MAX)
+    {
+        return UINT16_MAX;
+    }
+
+    return (uint16_t)div;
+}
+
+/**
+ * @brief 应用 FOC 基础配置到运行配置。
+ * @param config FOC 基础配置。
+ * @return void
+ */
+static void foc_apply_config(const user_info_foc_config_t *config)
+{
+    user_info_foc_config_t normalized_config;
+
+    if (config == NULL)
+    {
+        return;
+    }
+
+    normalized_config = *config;
+    UserInfo_NormalizeFocConfig(&normalized_config);
+    cfg.pole_pairs = (uint8_t)normalized_config.pole_pairs;
+    cfg.master_voltage = (int32_t)normalized_config.master_voltage_mv;
+    cfg.control_hz = (uint16_t)normalized_config.control_hz;
+    cfg.sensor_hz = (uint16_t)normalized_config.sensor_hz;
+}
+
+/**
+ * @brief 设置并应用 FOC 基础配置。
+ * @param config FOC 基础配置。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int foc_config_set(const user_info_foc_config_t *config)
+{
+    int ret;
+
+    ret = UserInfo_ValidateFocConfig(config);
+    if (ret != USER_INFO_OK)
+    {
+        return ret;
+    }
+
+    foc_apply_config(config);
+    foc.info.master_voltage = cfg.master_voltage;
+    foc.info.vector_voltage = OUT_MAX;
+    foc.info.pole_pairs = cfg.pole_pairs;
+    return USER_INFO_OK;
+}
+
+/**
+ * @brief 获取当前 FOC 基础配置。
+ * @param config FOC 基础配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int foc_config_get(user_info_foc_config_t *config)
+{
+    if (config == NULL)
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    config->pole_pairs = cfg.pole_pairs;
+    config->master_voltage_mv = (uint32_t)cfg.master_voltage;
+    config->control_hz = cfg.control_hz;
+    config->sensor_hz = cfg.sensor_hz;
+    return USER_INFO_OK;
+}
+
 foc_pid_t angle_pid = {
 
     .target = 0,
@@ -157,18 +260,18 @@ uint8_t angle_init = 0;
 float speed = 0;
 
 /**
- * @brief Run the FOC scheduler on each TIM2 base tick.
- * @return int32_t Returns 1 when one scheduler tick is processed, otherwise 0.
- * @note This function assumes a 250 us TIM2 base period. The sensor update
- *       runs every 2 ticks, the speed loop runs every 40 ticks, and the
- *       position loop runs every 160 ticks.
+ * @brief 执行 FOC 周期调度。
+ * @return int32_t 处理了一个调度 tick 返回 1，否则返回 0。
+ * @note TIM2 基准频率为 4000Hz，控制环和传感器采样由 cfg.control_hz 与 cfg.sensor_hz 决定。
  */
 int32_t foc_updata(void)
 {
-    static uint16_t flag_250us = 0;
-    const uint16_t sensor_div = 2U;
-    const uint16_t speed_loop_div = 40U;
-    const uint16_t position_loop_div = 160U;
+    static uint16_t scheduler_tick = 0;
+    const uint16_t control_div = foc_calc_loop_div(foc.cfg->control_hz);
+    const uint16_t sensor_div = foc_calc_loop_div(foc.cfg->sensor_hz);
+    const uint16_t speed_loop_div = foc_calc_loop_div(FOC_SPEED_LOOP_HZ);
+    const uint16_t position_loop_div = foc_calc_loop_div(FOC_POSITION_LOOP_HZ);
+    uint8_t control_loop_due = 0U;
     uint8_t sensor_loop_due = 0U;
     uint8_t speed_loop_due = 0U;
     uint8_t position_loop_due = 0U;
@@ -178,12 +281,13 @@ int32_t foc_updata(void)
         return 0;
     }
 
-    flag_250us++;
+    scheduler_tick++;
 
-    sensor_loop_due = ((flag_250us % sensor_div) == 0U);
-    speed_loop_due = ((flag_250us % speed_loop_div) == 0U);
-    position_loop_due = ((flag_250us % position_loop_div) == 0U);
-        
+    control_loop_due = ((scheduler_tick % control_div) == 0U);
+    sensor_loop_due = ((scheduler_tick % sensor_div) == 0U);
+    speed_loop_due = ((scheduler_tick % speed_loop_div) == 0U);
+    position_loop_due = ((scheduler_tick % position_loop_div) == 0U);
+
     if (sensor_loop_due != 0U)
     {
         foc_sensor_updata(&foc);
@@ -253,7 +357,7 @@ int32_t foc_updata(void)
             angle_idex = 0U;
         }
     }
-        
+
     if (speed_loop_due != 0U)
     {
         if (foc_control_mode != FOC_CTRL_MODE_CURRENT)
@@ -268,7 +372,7 @@ int32_t foc_updata(void)
         foc_speed_updata(&foc);
         can_protocol_report_motor_state();
     }
-        
+
     if ((position_loop_due != 0U)
         && (foc_control_mode == FOC_CTRL_MODE_POSITION))
     {
@@ -279,11 +383,14 @@ int32_t foc_updata(void)
         foc_speed_pid_set_target(out);
     }
 
-    foc_control(&foc);
-
-    if (flag_250us >= (40U * 1600U))
+    if (control_loop_due != 0U)
     {
-        flag_250us = 0U;
+        foc_control(&foc);
+    }
+
+    if (scheduler_tick >= FOC_SCHEDULER_TICK_HZ)
+    {
+        scheduler_tick = 0U;
     }
 
     updata_flag = 0U;
@@ -315,15 +422,22 @@ int foc_update_is_pending(void)
 
 void foc_root_init(void)
 {
+    user_info_foc_config_t foc_config;
+
+    if (Flash_LoadFocConfig(&foc_config) == USER_INFO_OK)
+    {
+        foc_apply_config(&foc_config);
+    }
+
     foc_init(&foc,&cfg);
 
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
     HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
     __HAL_TIM_MOE_ENABLE(&htim1);
-    
+
     GPIO_Init();
-    
+
     foc_output_enable(1);
 
     recoder_data data = {0};
@@ -340,11 +454,15 @@ void foc_root_init(void)
         data.can_configured = USER_INFO_CAN_CONFIGURED_NO;
         data.report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
         data.report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
+        data.pole_pairs = USER_INFO_DEFAULT_POLE_PAIRS;
+        data.master_voltage_mv = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV;
+        data.control_hz = USER_INFO_DEFAULT_CONTROL_HZ;
+        data.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
         Save_Recoder(data);
         printf("zero angle saved: %d\n", data.calibration_angle);
     }
 
-    HAL_TIM_Base_Start_IT(&htim2);    
+    HAL_TIM_Base_Start_IT(&htim2);
 }
 
 
@@ -390,12 +508,12 @@ void foc_output_enable(uint8_t enable)
     if(enable)
     {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);    
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
     }
     else
     {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);    
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
     }
 }
 
@@ -425,7 +543,7 @@ static void GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
-  
+
   /*Configure GPIO pin : LED_Pin */
   GPIO_InitStruct.Pin = GPIO_PIN_14 | GPIO_PIN_3;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -631,4 +749,3 @@ void foc_position_pid_get_target(float *target)
 {
     *target = angle_pid.target;
 }
-

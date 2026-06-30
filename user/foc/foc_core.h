@@ -177,7 +177,6 @@ typedef struct{
 	
 	uint16_t pwm_hz;
 	uint16_t control_hz;
-    uint16_t control_khz;
 	uint16_t sensor_hz;
     
 	void (*output)(uint16_t a, uint16_t b, uint16_t c);

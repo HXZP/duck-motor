@@ -6,10 +6,13 @@ mcu_library(
     name = "user_info",
     srcs = [
         "chip_uid.c",
+        "ota_info.c",
         "user_info.c",
     ],
     hdrs = [
         "chip_uid.h",
+        "flash_layout.h",
+        "ota_info.h",
         "user_info.h",
     ],
     includes = ["user"],

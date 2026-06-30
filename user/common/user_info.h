@@ -7,13 +7,15 @@ extern "C" {
 
 #include <stdint.h>
 
+#include "common/flash_layout.h"
+
 #define USER_INFO_OK                    0
 #define USER_INFO_ERR                  -1
 #define USER_INFO_ERR_PARAM            -2
 #define USER_INFO_ERR_VERIFY           -3
 
-#define USER_INFO_FLASH_ADDRESS         0x0800FC00u
-#define USER_INFO_FLASH_PAGE_SIZE       1024u
+#define USER_INFO_FLASH_ADDRESS         FLASH_LAYOUT_USER_INFO_ADDRESS
+#define USER_INFO_FLASH_PAGE_SIZE       FLASH_LAYOUT_FLASH_PAGE_SIZE
 #define USER_INFO_MAGIC                 0xA5A55A5Au
 #define USER_INFO_VERSION               3u
 
@@ -29,9 +31,30 @@ extern "C" {
 #define USER_INFO_DEFAULT_REPORT_PERIOD_MS 10u
 #define USER_INFO_MIN_REPORT_PERIOD_MS  10u
 #define USER_INFO_MAX_REPORT_PERIOD_MS  60000u
+#define USER_INFO_DEFAULT_POLE_PAIRS    7u
+#define USER_INFO_MIN_POLE_PAIRS        1u
+#define USER_INFO_MAX_POLE_PAIRS        32u
+#define USER_INFO_DEFAULT_MASTER_VOLTAGE_MV 12000u
+#define USER_INFO_MIN_MASTER_VOLTAGE_MV 1u
+#define USER_INFO_MAX_MASTER_VOLTAGE_MV 60000u
+#define USER_INFO_DEFAULT_CONTROL_HZ    2000u
+#define USER_INFO_DEFAULT_SENSOR_HZ     2000u
+#define USER_INFO_MIN_LOOP_HZ           1u
+#define USER_INFO_MAX_LOOP_HZ           4000u
 
 #define USER_INFO_OTA_FLAG_APP          0u
 #define USER_INFO_OTA_FLAG_BOOT         1u
+
+/**
+ * @brief FOC 持久化配置数据。
+ */
+typedef struct
+{
+    uint32_t pole_pairs;        /**< 电机极对数，单位：个。 */
+    uint32_t master_voltage_mv; /**< 母线电压，单位：毫伏。 */
+    uint32_t control_hz;        /**< FOC 控制频率，单位：Hz。 */
+    uint32_t sensor_hz;         /**< 传感器采样频率，单位：Hz。 */
+} user_info_foc_config_t;
 
 /**
  * @brief 用户信息业务数据。
@@ -42,7 +65,7 @@ typedef struct
 {
     int32_t calibration_angle;      /**< 校准角度，单位：内部角度计数。 */
     uint32_t can_id;                /**< CAN 节点 ID，单位：无。 */
-    uint32_t ota;                   /**< OTA 标志位，0 表示允许跳转 App，非 0 表示停留 Boot。 */
+    uint32_t ota;                   /**< 旧版 OTA 标志占位，单位：无。 */
     uint32_t can_configured;        /**< CAN 节点 ID 配置状态，单位：无。 */
     uint32_t report_enabled;        /**< 电机主动上报使能状态，单位：无。 */
     uint32_t report_period_ms;      /**< 电机主动上报周期，单位：毫秒。 */
@@ -93,6 +116,44 @@ int UserInfo_LoadOtaFlag(uint32_t *ota_flag);
  * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
  */
 int UserInfo_SaveOtaFlag(uint32_t ota_flag);
+
+/**
+ * @brief 计算 CRC32 校验值。
+ * @param data 输入数据缓冲区。
+ * @param len 输入数据长度，单位：字节。
+ * @return uint32_t CRC32 校验值，单位：无。
+ */
+uint32_t UserInfo_CalcCrc32(const uint8_t *data, uint32_t len);
+
+/**
+ * @brief 获取默认 FOC 配置。
+ * @param config FOC 配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_GetDefaultFocConfig(user_info_foc_config_t *config);
+
+/**
+ * @brief 校验 FOC 配置是否在数值合法范围内。
+ * @param config 待校验的 FOC 配置。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_ValidateFocConfig(const user_info_foc_config_t *config);
+
+/**
+ * @brief 归一化 FOC 配置。
+ * @param config 待归一化的 FOC 配置。
+ * @return void
+ */
+void UserInfo_NormalizeFocConfig(user_info_foc_config_t *config);
+
+/**
+ * @brief 更新用户信息页尾部扩展数据。
+ * @param page_offset 页内偏移，单位：字节。
+ * @param data 扩展数据缓冲区。
+ * @param len 扩展数据长度，单位：字节。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+int UserInfo_SavePageTail(uint32_t page_offset, const uint8_t *data, uint32_t len);
 
 #ifdef __cplusplus
 }

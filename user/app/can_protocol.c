@@ -527,6 +527,126 @@ static uint8_t can_protocol_store_report_config(uint32_t enabled, uint32_t perio
 }
 
 /**
+ * @brief 设置 FOC 基础配置参数。
+ * @param param_id 参数编号。
+ * @param raw_value 参数原始值，单位由参数编号决定。
+ * @return uint8_t 协议状态码。
+ */
+static uint8_t can_protocol_set_foc_config_param(uint8_t param_id, uint32_t raw_value)
+{
+    user_info_foc_config_t config;
+
+    if (foc_config_get(&config) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_CAN_ERROR;
+    }
+
+    switch (param_id)
+    {
+        case CAN_PROTOCOL_FOC_CONFIG_POLE_PAIRS:
+        {
+            config.pole_pairs = raw_value;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_MASTER_VOLTAGE_MV:
+        {
+            config.master_voltage_mv = raw_value;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_CONTROL_HZ:
+        {
+            config.control_hz = raw_value;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_SENSOR_HZ:
+        {
+            config.sensor_hz = raw_value;
+            break;
+        }
+
+        default:
+        {
+            return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+        }
+    }
+
+    if (UserInfo_ValidateFocConfig(&config) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+    }
+
+    if (Flash_SaveFocConfig(&config) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_CAN_ERROR;
+    }
+
+    if (foc_config_set(&config) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_CAN_ERROR;
+    }
+
+    return CAN_PROTOCOL_STATUS_OK;
+}
+
+/**
+ * @brief 读取 FOC 基础配置参数。
+ * @param param_id 参数编号。
+ * @param raw_value 参数原始值输出缓冲区，单位由参数编号决定。
+ * @return uint8_t 协议状态码。
+ */
+static uint8_t can_protocol_get_foc_config_param(uint8_t param_id, uint32_t *raw_value)
+{
+    user_info_foc_config_t config;
+
+    if (raw_value == NULL)
+    {
+        return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+    }
+
+    if (foc_config_get(&config) != USER_INFO_OK)
+    {
+        return CAN_PROTOCOL_STATUS_CAN_ERROR;
+    }
+
+    switch (param_id)
+    {
+        case CAN_PROTOCOL_FOC_CONFIG_POLE_PAIRS:
+        {
+            *raw_value = config.pole_pairs;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_MASTER_VOLTAGE_MV:
+        {
+            *raw_value = config.master_voltage_mv;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_CONTROL_HZ:
+        {
+            *raw_value = config.control_hz;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_SENSOR_HZ:
+        {
+            *raw_value = config.sensor_hz;
+            break;
+        }
+
+        default:
+        {
+            return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+        }
+    }
+
+    return CAN_PROTOCOL_STATUS_OK;
+}
+
+/**
  * @brief 配置一个 CAN 标准帧过滤器。
  * @param bank 过滤器组编号，单位：无。
  * @param std_id 标准帧 ID，单位：无。
@@ -1594,6 +1714,41 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
                 NVIC_SystemReset();
             }
 
+            return;
+        }
+
+        case CAN_PROTOCOL_CMD_SET_FOC_CONFIG:
+        {
+            uint32_t raw_value;
+
+            if (rxframe.DLC < 6u)
+            {
+                status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                break;
+            }
+
+            raw_value = can_protocol_decode_uint32(&rx_data[2]);
+            status = can_protocol_set_foc_config_param(rx_data[1], raw_value);
+            ack_payload[0] = rx_data[1];
+            can_protocol_encode_uint32(&ack_payload[1], raw_value);
+            can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
+            return;
+        }
+
+        case CAN_PROTOCOL_CMD_GET_FOC_CONFIG:
+        {
+            uint32_t raw_value = 0u;
+
+            if (rxframe.DLC < 2u)
+            {
+                status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                break;
+            }
+
+            status = can_protocol_get_foc_config_param(rx_data[1], &raw_value);
+            ack_payload[0] = rx_data[1];
+            can_protocol_encode_uint32(&ack_payload[1], raw_value);
+            can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
             return;
         }
 
