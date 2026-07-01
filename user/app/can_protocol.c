@@ -567,6 +567,12 @@ static uint8_t can_protocol_set_foc_config_param(uint8_t param_id, uint32_t raw_
             break;
         }
 
+        case CAN_PROTOCOL_FOC_CONFIG_PHASE_MAP:
+        {
+            config.phase_map = raw_value;
+            break;
+        }
+
         default:
         {
             return CAN_PROTOCOL_STATUS_INVALID_PARAM;
@@ -634,6 +640,12 @@ static uint8_t can_protocol_get_foc_config_param(uint8_t param_id, uint32_t *raw
         case CAN_PROTOCOL_FOC_CONFIG_SENSOR_HZ:
         {
             *raw_value = config.sensor_hz;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_PHASE_MAP:
+        {
+            *raw_value = config.phase_map;
             break;
         }
 

@@ -178,6 +178,7 @@ typedef struct{
 	uint16_t pwm_hz;
 	uint16_t control_hz;
 	uint16_t sensor_hz;
+	uint8_t phase_map; /**< 三相输出映射编号，单位：无。 */
     
 	void (*output)(uint16_t a, uint16_t b, uint16_t c);
     void (*delay)(uint32_t ms);

@@ -41,6 +41,9 @@ extern "C" {
 #define USER_INFO_DEFAULT_SENSOR_HZ     2000u
 #define USER_INFO_MIN_LOOP_HZ           1u
 #define USER_INFO_MAX_LOOP_HZ           4000u
+#define USER_INFO_DEFAULT_PHASE_MAP     0u
+#define USER_INFO_MIN_PHASE_MAP         0u
+#define USER_INFO_MAX_PHASE_MAP         5u
 
 #define USER_INFO_OTA_FLAG_APP          0u
 #define USER_INFO_OTA_FLAG_BOOT         1u
@@ -54,6 +57,7 @@ typedef struct
     uint32_t master_voltage_mv; /**< 母线电压，单位：毫伏。 */
     uint32_t control_hz;        /**< FOC 控制频率，单位：Hz。 */
     uint32_t sensor_hz;         /**< 传感器采样频率，单位：Hz。 */
+    uint32_t phase_map;         /**< 三相输出映射编号，单位：无。 */
 } user_info_foc_config_t;
 
 /**

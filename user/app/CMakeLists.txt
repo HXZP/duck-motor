@@ -8,6 +8,7 @@ target_sources(user_app PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/flash.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/foc_init.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/log.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/motor_music.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/soft_iic.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/user_main.c"
 )

@@ -277,6 +277,7 @@ int UserInfo_GetDefaultFocConfig(user_info_foc_config_t *config)
     config->master_voltage_mv = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV;
     config->control_hz = USER_INFO_DEFAULT_CONTROL_HZ;
     config->sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
+    config->phase_map = USER_INFO_DEFAULT_PHASE_MAP;
     return USER_INFO_OK;
 }
 
@@ -312,6 +313,12 @@ int UserInfo_ValidateFocConfig(const user_info_foc_config_t *config)
 
     if ((config->sensor_hz < USER_INFO_MIN_LOOP_HZ) ||
         (config->sensor_hz > USER_INFO_MAX_LOOP_HZ))
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    if ((config->phase_map < USER_INFO_MIN_PHASE_MAP) ||
+        (config->phase_map > USER_INFO_MAX_PHASE_MAP))
     {
         return USER_INFO_ERR_PARAM;
     }
@@ -353,6 +360,12 @@ void UserInfo_NormalizeFocConfig(user_info_foc_config_t *config)
         (config->sensor_hz > USER_INFO_MAX_LOOP_HZ))
     {
         config->sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
+    }
+
+    if ((config->phase_map < USER_INFO_MIN_PHASE_MAP) ||
+        (config->phase_map > USER_INFO_MAX_PHASE_MAP))
+    {
+        config->phase_map = USER_INFO_DEFAULT_PHASE_MAP;
     }
 }
 

@@ -26,6 +26,12 @@ static void GPIO_Init(void);
 static int32_t foc_limit_target(int32_t target);
 static uint16_t foc_calc_loop_div(uint16_t target_hz);
 static void foc_apply_config(const user_info_foc_config_t *config);
+static void foc_map_phase_output(uint16_t a,
+                                 uint16_t b,
+                                 uint16_t c,
+                                 uint16_t *ch1,
+                                 uint16_t *ch2,
+                                 uint16_t *ch3);
 
 #define FOC_SCHEDULER_TICK_HZ      4000U
 #define FOC_SPEED_LOOP_HZ          100U
@@ -40,9 +46,15 @@ static void foc_apply_config(const user_info_foc_config_t *config);
  */
 void foc_output(uint16_t a, uint16_t b, uint16_t c)
 {
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, a);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, b);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, c);
+    uint16_t ch1;
+    uint16_t ch2;
+    uint16_t ch3;
+
+    foc_map_phase_output(a, b, c, &ch1, &ch2, &ch3);
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ch1);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ch2);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, ch3);
 }
 
 foc_t foc;
@@ -56,6 +68,7 @@ foc_cfg_t cfg = {
 
 	.control_hz = USER_INFO_DEFAULT_CONTROL_HZ,
 	.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ,
+    .phase_map = USER_INFO_DEFAULT_PHASE_MAP,
 
 	.pwm_period = 1600,
 	.pwm_hz = 20000,
@@ -175,6 +188,81 @@ static uint16_t foc_calc_loop_div(uint16_t target_hz)
 }
 
 /**
+ * @brief 按相序映射计算 TIM 物理通道占空比。
+ * @param a A 相占空比，单位：计数。
+ * @param b B 相占空比，单位：计数。
+ * @param c C 相占空比，单位：计数。
+ * @param ch1 TIM1 CH1 占空比输出指针，单位：计数。
+ * @param ch2 TIM1 CH2 占空比输出指针，单位：计数。
+ * @param ch3 TIM1 CH3 占空比输出指针，单位：计数。
+ * @return void
+ */
+static void foc_map_phase_output(uint16_t a,
+                                 uint16_t b,
+                                 uint16_t c,
+                                 uint16_t *ch1,
+                                 uint16_t *ch2,
+                                 uint16_t *ch3)
+{
+    if ((ch1 == NULL) || (ch2 == NULL) || (ch3 == NULL))
+    {
+        return;
+    }
+
+    switch (cfg.phase_map)
+    {
+        case 1u:
+        {
+            *ch1 = a;
+            *ch2 = c;
+            *ch3 = b;
+            break;
+        }
+
+        case 2u:
+        {
+            *ch1 = b;
+            *ch2 = a;
+            *ch3 = c;
+            break;
+        }
+
+        case 3u:
+        {
+            *ch1 = b;
+            *ch2 = c;
+            *ch3 = a;
+            break;
+        }
+
+        case 4u:
+        {
+            *ch1 = c;
+            *ch2 = a;
+            *ch3 = b;
+            break;
+        }
+
+        case 5u:
+        {
+            *ch1 = c;
+            *ch2 = b;
+            *ch3 = a;
+            break;
+        }
+
+        case 0u:
+        default:
+        {
+            *ch1 = a;
+            *ch2 = b;
+            *ch3 = c;
+            break;
+        }
+    }
+}
+
+/**
  * @brief 应用 FOC 基础配置到运行配置。
  * @param config FOC 基础配置。
  * @return void
@@ -194,6 +282,7 @@ static void foc_apply_config(const user_info_foc_config_t *config)
     cfg.master_voltage = (int32_t)normalized_config.master_voltage_mv;
     cfg.control_hz = (uint16_t)normalized_config.control_hz;
     cfg.sensor_hz = (uint16_t)normalized_config.sensor_hz;
+    cfg.phase_map = (uint8_t)normalized_config.phase_map;
 }
 
 /**
@@ -234,6 +323,7 @@ int foc_config_get(user_info_foc_config_t *config)
     config->master_voltage_mv = (uint32_t)cfg.master_voltage;
     config->control_hz = cfg.control_hz;
     config->sensor_hz = cfg.sensor_hz;
+    config->phase_map = cfg.phase_map;
     return USER_INFO_OK;
 }
 
@@ -458,6 +548,7 @@ void foc_root_init(void)
         data.master_voltage_mv = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV;
         data.control_hz = USER_INFO_DEFAULT_CONTROL_HZ;
         data.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
+        data.phase_map = USER_INFO_DEFAULT_PHASE_MAP;
         Save_Recoder(data);
         printf("zero angle saved: %d\n", data.calibration_angle);
     }
@@ -505,7 +596,7 @@ void foc_set_target(int32_t d_target, int32_t q_target, int32_t theta_target)
 
 void foc_output_enable(uint8_t enable)
 {
-    if(enable)
+    if (enable != 0U)
     {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);

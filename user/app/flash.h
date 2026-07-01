@@ -24,6 +24,7 @@ typedef struct
     uint32_t master_voltage_mv; /**< 母线电压，单位：毫伏。 */
     uint32_t control_hz;       /**< FOC 控制频率，单位：Hz。 */
     uint32_t sensor_hz;        /**< 传感器采样频率，单位：Hz。 */
+    uint32_t phase_map;        /**< 三相输出映射编号，单位：无。 */
 } recoder_data;
 
 /**

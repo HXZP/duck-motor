@@ -12,6 +12,7 @@ mcu_library(
         "flash.c",
         "foc_init.c",
         "log.c",
+        "motor_music.c",
         "soft_iic.c",
         "user_main.c",
     ],

@@ -5,8 +5,30 @@
 #include <string.h>
 
 #define FLASH_FOC_CONFIG_MAGIC       0x464F4343u
-#define FLASH_FOC_CONFIG_VERSION     1u
-#define FLASH_FOC_CONFIG_OFFSET      (USER_INFO_FLASH_PAGE_SIZE - sizeof(flash_foc_config_record_t))
+#define FLASH_FOC_CONFIG_VERSION_V1  1u
+#define FLASH_FOC_CONFIG_VERSION     2u
+
+/**
+ * @brief V1 FOC 配置存储数据。
+ */
+typedef struct
+{
+    uint32_t pole_pairs;        /**< 电机极对数，单位：个。 */
+    uint32_t master_voltage_mv; /**< 母线电压，单位：毫伏。 */
+    uint32_t control_hz;        /**< FOC 控制频率，单位：Hz。 */
+    uint32_t sensor_hz;         /**< 传感器采样频率，单位：Hz。 */
+} flash_foc_config_v1_t;
+
+/**
+ * @brief V1 FOC 配置扩展存储记录。
+ */
+typedef struct
+{
+    uint32_t magic;                     /**< FOC 配置扩展魔数，单位：无。 */
+    uint32_t version;                   /**< FOC 配置扩展版本，单位：无。 */
+    flash_foc_config_v1_t config;       /**< V1 FOC 持久化配置。 */
+    uint32_t crc32;                     /**< CRC32 校验值，单位：无。 */
+} flash_foc_config_record_v1_t;
 
 /**
  * @brief FOC 配置扩展存储记录。
@@ -19,8 +41,30 @@ typedef struct
     uint32_t crc32;                     /**< CRC32 校验值，单位：无。 */
 } flash_foc_config_record_t;
 
+#define FLASH_FOC_CONFIG_OFFSET_V1   (USER_INFO_FLASH_PAGE_SIZE - sizeof(flash_foc_config_record_v1_t))
+#define FLASH_FOC_CONFIG_OFFSET      (USER_INFO_FLASH_PAGE_SIZE - sizeof(flash_foc_config_record_t))
+
 int Flash_LoadFocConfig(user_info_foc_config_t *config);
 int Flash_SaveFocConfig(const user_info_foc_config_t *config);
+
+/**
+ * @brief 计算 V1 FOC 配置扩展记录 CRC32。
+ * @param record V1 FOC 配置扩展记录。
+ * @return uint32_t CRC32 校验值，单位：无。
+ */
+static uint32_t flash_calc_foc_config_v1_crc32(const flash_foc_config_record_v1_t *record)
+{
+    flash_foc_config_record_v1_t temp;
+
+    if (record == NULL)
+    {
+        return 0u;
+    }
+
+    temp = *record;
+    temp.crc32 = 0u;
+    return UserInfo_CalcCrc32((const uint8_t *)&temp, (uint32_t)sizeof(temp));
+}
 
 /**
  * @brief 计算 FOC 配置扩展记录 CRC32。
@@ -39,6 +83,76 @@ static uint32_t flash_calc_foc_config_crc32(const flash_foc_config_record_t *rec
     temp = *record;
     temp.crc32 = 0u;
     return UserInfo_CalcCrc32((const uint8_t *)&temp, (uint32_t)sizeof(temp));
+}
+
+/**
+ * @brief 读取 V2 FOC 持久化配置。
+ * @param config FOC 配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+static int flash_load_foc_config_v2(user_info_foc_config_t *config)
+{
+    const flash_foc_config_record_t *record;
+    uint32_t crc32;
+
+    if (config == NULL)
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    record = (const flash_foc_config_record_t *)(USER_INFO_FLASH_ADDRESS + FLASH_FOC_CONFIG_OFFSET);
+    if ((record->magic != FLASH_FOC_CONFIG_MAGIC) ||
+        (record->version != FLASH_FOC_CONFIG_VERSION))
+    {
+        return USER_INFO_ERR_VERIFY;
+    }
+
+    crc32 = flash_calc_foc_config_crc32(record);
+    if (crc32 != record->crc32)
+    {
+        return USER_INFO_ERR_VERIFY;
+    }
+
+    *config = record->config;
+    UserInfo_NormalizeFocConfig(config);
+    return USER_INFO_OK;
+}
+
+/**
+ * @brief 读取 V1 FOC 持久化配置并补齐默认相序映射。
+ * @param config FOC 配置输出缓冲区。
+ * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
+ */
+static int flash_load_foc_config_v1(user_info_foc_config_t *config)
+{
+    const flash_foc_config_record_v1_t *record;
+    uint32_t crc32;
+
+    if (config == NULL)
+    {
+        return USER_INFO_ERR_PARAM;
+    }
+
+    record = (const flash_foc_config_record_v1_t *)(USER_INFO_FLASH_ADDRESS + FLASH_FOC_CONFIG_OFFSET_V1);
+    if ((record->magic != FLASH_FOC_CONFIG_MAGIC) ||
+        (record->version != FLASH_FOC_CONFIG_VERSION_V1))
+    {
+        return USER_INFO_ERR_VERIFY;
+    }
+
+    crc32 = flash_calc_foc_config_v1_crc32(record);
+    if (crc32 != record->crc32)
+    {
+        return USER_INFO_ERR_VERIFY;
+    }
+
+    config->pole_pairs = record->config.pole_pairs;
+    config->master_voltage_mv = record->config.master_voltage_mv;
+    config->control_hz = record->config.control_hz;
+    config->sensor_hz = record->config.sensor_hz;
+    config->phase_map = USER_INFO_DEFAULT_PHASE_MAP;
+    UserInfo_NormalizeFocConfig(config);
+    return USER_INFO_OK;
 }
 
 /**
@@ -72,6 +186,7 @@ static void flash_copy_user_info_to_recoder(const user_info_data_t *info, recode
     data->master_voltage_mv = foc_config.master_voltage_mv;
     data->control_hz = foc_config.control_hz;
     data->sensor_hz = foc_config.sensor_hz;
+    data->phase_map = foc_config.phase_map;
 }
 
 /**
@@ -112,6 +227,7 @@ static void flash_copy_recoder_to_foc_config(recoder_data data, user_info_foc_co
     config->master_voltage_mv = data.master_voltage_mv;
     config->control_hz = data.control_hz;
     config->sensor_hz = data.sensor_hz;
+    config->phase_map = data.phase_map;
 }
 
 /**
@@ -189,30 +305,26 @@ void Save_OtaFlag(uint32_t ota_flag)
  */
 int Flash_LoadFocConfig(user_info_foc_config_t *config)
 {
-    const flash_foc_config_record_t *record;
-    uint32_t crc32;
+    int ret;
 
     if (config == NULL)
     {
         return USER_INFO_ERR_PARAM;
     }
 
-    record = (const flash_foc_config_record_t *)(USER_INFO_FLASH_ADDRESS + FLASH_FOC_CONFIG_OFFSET);
-    if ((record->magic != FLASH_FOC_CONFIG_MAGIC) ||
-        (record->version != FLASH_FOC_CONFIG_VERSION))
+    ret = flash_load_foc_config_v2(config);
+    if (ret == USER_INFO_OK)
     {
-        return UserInfo_GetDefaultFocConfig(config);
+        return USER_INFO_OK;
     }
 
-    crc32 = flash_calc_foc_config_crc32(record);
-    if (crc32 != record->crc32)
+    ret = flash_load_foc_config_v1(config);
+    if (ret == USER_INFO_OK)
     {
-        return UserInfo_GetDefaultFocConfig(config);
+        return USER_INFO_OK;
     }
 
-    *config = record->config;
-    UserInfo_NormalizeFocConfig(config);
-    return USER_INFO_OK;
+    return UserInfo_GetDefaultFocConfig(config);
 }
 
 /**
