@@ -569,6 +569,8 @@ def _mcu_firmware_package_impl(ctx):
         package_name,
         "--build-type",
         build_type,
+        "--workspace-status",
+        ctx.info_file.path,
     ]
 
     arguments.extend(_package_artifact_args(

@@ -35,7 +35,7 @@ def _bazel_flash_target_impl(ctx):
         (
             "\"" + ctx.attr.python + "\" "
             + "\"%WORKSPACE%\\scripts\\bazel_flash.py\" "
-            + "--image \"" + image_file.path.replace("/", "\\") + "\" "
+            + "--default-image \"" + image_file.path.replace("/", "\\") + "\" "
             + "--address " + ctx.attr.address + " "
             + "--device " + ctx.attr.device + " "
             + "--speed " + ctx.attr.speed + " "

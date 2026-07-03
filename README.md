@@ -35,7 +35,7 @@ Bazel 固件目标会同时生成两类占用报告：
 *.memory.txt    按链接脚本统计的 Flash/RAM 使用量和百分比
 ```
 
-`firmware_package` 目录会按 App 版本号命名，并包含带版本号的固件文件、内存报告、`manifest.json` 和 `readme.txt`：
+`bazel-bin/firmware_package` 目录会保存当前构建输出；工程根目录下的 `firmware_package/` 会同步保留各版本发布包，重新编译同一版本时只覆盖同名版本目录，不删除其它版本。发布包按 App 版本号命名，并包含带版本号的固件文件、内存报告、`manifest.json` 和 `readme.txt`：
 
 ```text
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_full_v1.0.0.bin
@@ -46,6 +46,7 @@ bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_app_v1.0.0.memory.txt
 bazel-bin/firmware_package/motor_duck_v1.0.0/motor_duck_ota_app_v1.0.0.bin
 bazel-bin/firmware_package/motor_duck_v1.0.0/manifest.json
 bazel-bin/firmware_package/motor_duck_v1.0.0/readme.txt
+firmware_package/motor_duck_v1.0.0/readme.txt
 ```
 
 调试版本：
@@ -97,7 +98,7 @@ bazelisk run --config=debug //scripts:refresh_clangd
 
 ## Bazel 烧录
 
-通过 J-Link 烧录 full 镜像：
+通过 J-Link 烧录 full 镜像，默认会从工程根目录 `firmware_package/` 中列出版本并交互选择：
 
 ```powershell
 bazelisk run //scripts:flash_full
@@ -107,6 +108,19 @@ bazelisk run //scripts:flash_full
 
 ```powershell
 bazelisk run //scripts:flash_full -- --list-only
+```
+
+烧录根目录 `firmware_package/` 中保留的指定版本 full 镜像：
+
+```powershell
+bazelisk run //scripts:flash_full -- --version 1.0.1
+bazelisk run //scripts:flash_full -- --version v1.0.1 --list-only
+```
+
+也可以直接指定任意 full bin 文件路径：
+
+```powershell
+bazelisk run //scripts:flash_full -- --image .\firmware_package\motor_duck_v1.0.1\motor_duck_full_v1.0.1.bin
 ```
 
 如 J-Link 不在 PATH 中，可显式指定：

@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+from datetime import datetime
 import glob
+import json
 import os
 from pathlib import Path
 import shutil
@@ -56,6 +58,168 @@ def resolve_image_path(workspace_root: Path, image_path: str) -> Path:
         return image.resolve()
     else:
         return (workspace_root / image).resolve()
+
+
+def normalize_version(version: str) -> str:
+    """
+    @brief 规范化用户输入的版本号。
+    @param version 用户输入版本号。
+    @return 返回不带 v 前缀的版本号。
+    """
+    text = version.strip()
+
+    if text.startswith("v") or text.startswith("V"):
+        return text[1:]
+    else:
+        return text
+
+
+def find_artifact_file(manifest: dict, role: str) -> str:
+    """
+    @brief 从发布包清单中查找指定角色文件。
+    @param manifest 发布包清单。
+    @param role 产物角色。
+    @return 返回产物文件名。
+    """
+    for artifact in manifest.get("artifacts", []):
+        if artifact.get("role") == role:
+            return artifact["file"]
+
+    raise RuntimeError("发布包清单中找不到产物角色: " + role)
+
+
+def resolve_version_image_path(workspace_root: Path, version: str) -> Path:
+    """
+    @brief 根据发布版本解析 full bin 镜像路径。
+    @param workspace_root 工作区根目录路径。
+    @param version 发布版本号。
+    @return 返回 full bin 镜像绝对路径。
+    """
+    normalized_version = normalize_version(version)
+    package_dir = workspace_root / "firmware_package" / ("motor_duck_v" + normalized_version)
+    manifest_path = package_dir / "manifest.json"
+
+    if not manifest_path.is_file():
+        raise FileNotFoundError("找不到版本发布包清单: " + str(manifest_path))
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    full_bin = package_dir / find_artifact_file(manifest, "full_bin")
+    return full_bin.resolve()
+
+
+def make_version_sort_key(version: str) -> tuple[int, int, int, str]:
+    """
+    @brief 生成版本排序键。
+    @param version 版本号字符串。
+    @return 返回版本排序键。
+    """
+    numbers = []
+
+    for part in normalize_version(version).split("."):
+        if part.isdigit():
+            numbers.append(int(part))
+        else:
+            numbers.append(0)
+
+    while len(numbers) < 3:
+        numbers.append(0)
+
+    return numbers[0], numbers[1], numbers[2], version
+
+
+def format_timestamp(timestamp_s: float) -> str:
+    """
+    @brief 格式化文件时间戳。
+    @param timestamp_s 时间戳，单位：秒。
+    @return 返回可读时间字符串。
+    """
+    return datetime.fromtimestamp(timestamp_s).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def list_release_packages(workspace_root: Path) -> list[dict]:
+    """
+    @brief 列出根目录 firmware_package 下可烧录版本。
+    @param workspace_root 工作区根目录路径。
+    @return 返回可烧录版本列表。
+    """
+    archive_root = workspace_root / "firmware_package"
+    packages = []
+
+    if not archive_root.is_dir():
+        return packages
+
+    for package_dir in archive_root.glob("motor_duck_v*"):
+        manifest_path = package_dir / "manifest.json"
+
+        if not manifest_path.is_file():
+            continue
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        version = str(manifest.get("version", package_dir.name.replace("motor_duck_v", "", 1)))
+        full_bin = package_dir / find_artifact_file(manifest, "full_bin")
+
+        if not full_bin.is_file():
+            continue
+
+        packages.append(
+            {
+                "version": version,
+                "package_dir": package_dir,
+                "full_bin": full_bin.resolve(),
+                "file": full_bin.name,
+                "size": full_bin.stat().st_size,
+                "time": format_timestamp(manifest_path.stat().st_mtime),
+            }
+        )
+
+    packages.sort(key=lambda item: make_version_sort_key(item["version"]), reverse=True)
+    return packages
+
+
+def prompt_select_package(packages: list[dict]) -> dict:
+    """
+    @brief 交互选择待烧录版本。
+    @param packages 可烧录版本列表。
+    @return 返回用户选择的发布包信息。
+    """
+    print("可烧录版本：")
+
+    for index, package in enumerate(packages, start=1):
+        print(
+            f"  {index}. v{package['version']}  "
+            f"{package['file']}  "
+            f"{package['size']} Byte  "
+            f"{package['time']}"
+        )
+
+    while True:
+        choice = input("请选择烧录版本序号，输入 q 退出: ").strip()
+
+        if choice.lower() == "q":
+            raise KeyboardInterrupt("用户取消烧录")
+
+        if choice.isdigit():
+            index = int(choice)
+
+            if 1 <= index <= len(packages):
+                return packages[index - 1]
+
+        print("输入无效，请重新选择。")
+
+
+def resolve_interactive_image_path(workspace_root: Path) -> Path:
+    """
+    @brief 通过交互菜单选择 full bin 镜像路径。
+    @param workspace_root 工作区根目录路径。
+    @return 返回用户选择的 full bin 镜像路径。
+    """
+    packages = list_release_packages(workspace_root)
+
+    if not packages:
+        raise RuntimeError("未找到可烧录发布包，请先执行 bazelisk build //:firmware")
+
+    selected = prompt_select_package(packages)
+    return selected["full_bin"]
 
 
 def find_jlink(requested_flash_exe: str) -> str:
@@ -171,7 +335,9 @@ def parse_args() -> argparse.Namespace:
     @return 返回命令行参数对象。
     """
     parser = argparse.ArgumentParser(description="Run motor_duck flash script from Bazel.")
-    parser.add_argument("--image", required=True, help="待烧录 full bin 镜像路径。")
+    parser.add_argument("--default-image", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--image", default="", help="待烧录 full bin 镜像路径。")
+    parser.add_argument("--version", default="", help="从根目录 firmware_package 选择待烧录版本。")
     parser.add_argument("--address", default=DEFAULT_ADDRESS, help="烧录起始地址。")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="J-Link 设备型号。")
     parser.add_argument("--speed", default=DEFAULT_JLINK_SPEED_KHZ, help="SWD 速率，单位：kHz。")
@@ -189,7 +355,14 @@ def main() -> int:
     args = parse_args()
     workspace_root = get_workspace_root()
     build_dir = ensure_build_dir(workspace_root)
-    image_path = resolve_image_path(workspace_root, args.image)
+
+    if args.version:
+        image_path = resolve_version_image_path(workspace_root, args.version)
+    elif args.image:
+        image_path = resolve_image_path(workspace_root, args.image)
+    else:
+        image_path = resolve_interactive_image_path(workspace_root)
+
     script_path = build_dir / "flash_full.jlink"
 
     if not image_path.is_file():

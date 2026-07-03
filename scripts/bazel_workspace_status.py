@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import time
+from pathlib import Path
 
 
 def main() -> int:
@@ -10,6 +11,7 @@ def main() -> int:
     @return 返回进程退出码，0 表示成功。
     """
     print("STABLE_MCU_REPORT_BUILD_ID " + str(time.time_ns()))
+    print("STABLE_WORKSPACE_ROOT " + Path.cwd().as_posix())
     return 0
 
 

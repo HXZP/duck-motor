@@ -8,6 +8,7 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from typing import Dict
 from typing import List
 
@@ -177,6 +178,48 @@ def write_package_readme(package_dir: Path, manifest: Dict[str, object], build_t
     readme_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def read_workspace_root(status_path: Path) -> Optional[Path]:
+    """
+    @brief 从 Bazel workspace status 文件读取工作区根目录。
+    @param status_path workspace status 文件路径。
+    @return 返回工作区根目录，读取失败时返回 None。
+    """
+    if not status_path.is_file():
+        return None
+
+    for line in status_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split(" ", 1)
+
+        if len(parts) != 2:
+            continue
+
+        if parts[0] == "STABLE_WORKSPACE_ROOT":
+            return Path(parts[1])
+
+    return None
+
+
+def sync_package_to_archive(package_dir: Path, workspace_root: Optional[Path]) -> Optional[Path]:
+    """
+    @brief 将当前版本发布包同步到工作区根目录归档。
+    @param package_dir 当前版本发布包目录。
+    @param workspace_root 工作区根目录。
+    @return 返回归档目录路径，未同步时返回 None。
+    """
+    if workspace_root is None:
+        return None
+
+    archive_root = workspace_root / "firmware_package"
+    archive_dir = archive_root / package_dir.name
+
+    if archive_dir.exists():
+        shutil.rmtree(archive_dir)
+
+    archive_root.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(package_dir, archive_dir)
+    return archive_dir
+
+
 def make_memory_report_title(role: str) -> str:
     """
     @brief 根据产物角色生成内存报告标题。
@@ -224,6 +267,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--version-header", required=True, type=Path, help="app_version.h 路径。")
     parser.add_argument("--package-name", required=True, help="发布包名称。")
     parser.add_argument("--build-type", required=True, help="构建类型。")
+    parser.add_argument("--workspace-status", type=Path, help="Bazel workspace status 文件路径。")
     parser.add_argument(
         "--artifact",
         action="append",
@@ -244,8 +288,8 @@ def main() -> int:
     version = read_app_version(args.version_header)
     package_dir = args.output_dir / f"{args.package_name}_v{version}"
 
-    if args.output_dir.exists():
-        shutil.rmtree(args.output_dir)
+    if package_dir.exists():
+        shutil.rmtree(package_dir)
 
     package_dir.mkdir(parents=True, exist_ok=True)
 
@@ -264,8 +308,14 @@ def main() -> int:
     build_time = make_build_time_text()
     write_manifest(package_dir, manifest)
     write_package_readme(package_dir, manifest, build_time)
+    archive_dir = None
+
+    if args.workspace_status is not None:
+        archive_dir = sync_package_to_archive(package_dir, read_workspace_root(args.workspace_status))
 
     print("firmware package: " + str(package_dir))
+    if archive_dir is not None:
+        print("firmware archive: " + str(archive_dir))
     print("version: " + version)
     print("artifacts: " + str(len(artifacts)))
     print_memory_reports(args.artifact)
