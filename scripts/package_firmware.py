@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 from typing import List
@@ -40,13 +41,14 @@ def read_app_version(version_header: Path) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-def calc_sha256(path: Path) -> str:
+def calc_file_hash(path: Path, algorithm: str) -> str:
     """
-    @brief 计算文件 SHA256。
+    @brief 计算文件哈希值。
     @param path 文件路径。
-    @return 返回 SHA256 十六进制字符串。
+    @param algorithm 哈希算法名称。
+    @return 返回十六进制哈希字符串。
     """
-    sha256 = hashlib.sha256()
+    hash_context = hashlib.new(algorithm)
 
     with path.open("rb") as file:
         while True:
@@ -55,9 +57,27 @@ def calc_sha256(path: Path) -> str:
             if not chunk:
                 break
 
-            sha256.update(chunk)
+            hash_context.update(chunk)
 
-    return sha256.hexdigest()
+    return hash_context.hexdigest()
+
+
+def calc_md5(path: Path) -> str:
+    """
+    @brief 计算文件 MD5。
+    @param path 文件路径。
+    @return 返回 MD5 十六进制字符串。
+    """
+    return calc_file_hash(path, "md5")
+
+
+def calc_sha256(path: Path) -> str:
+    """
+    @brief 计算文件 SHA256。
+    @param path 文件路径。
+    @return 返回 SHA256 十六进制字符串。
+    """
+    return calc_file_hash(path, "sha256")
 
 
 def copy_artifact(package_dir: Path, package_name: str, version: str, artifact: List[str]) -> Dict[str, object]:
@@ -84,6 +104,7 @@ def copy_artifact(package_dir: Path, package_name: str, version: str, artifact: 
         "role": role,
         "file": output_name,
         "size": output_path.stat().st_size,
+        "md5": calc_md5(output_path),
         "sha256": calc_sha256(output_path),
     }
 
@@ -100,6 +121,60 @@ def write_manifest(package_dir: Path, manifest: Dict[str, object]) -> None:
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def make_build_time_text() -> str:
+    """
+    @brief 生成发布包构建时间文本。
+    @return 返回带时区的构建时间字符串。
+    """
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+
+
+def write_package_readme(package_dir: Path, manifest: Dict[str, object], build_time: str) -> None:
+    """
+    @brief 写入发布包说明文件。
+    @param package_dir 发布包目录。
+    @param manifest 清单数据。
+    @param build_time 构建时间字符串。
+    @return 无。
+    """
+    readme_path = package_dir / "readme.txt"
+    lines = [
+        "固件发布说明",
+        "",
+        "基本信息：",
+        f"包名：{manifest['package']}",
+        f"版本：{manifest['version']}",
+        f"构建类型：{manifest['build_type']}",
+        f"生成时间：{build_time}",
+        f"目录：{manifest['directory']}",
+        "",
+        "固件文件：",
+        "角色 | 文件名 | 大小(Byte) | MD5 | SHA256",
+        "--- | --- | --- | --- | ---",
+    ]
+
+    for artifact in manifest["artifacts"]:
+        lines.append(
+            f"{artifact['role']} | "
+            f"{artifact['file']} | "
+            f"{artifact['size']} | "
+            f"{artifact['md5']} | "
+            f"{artifact['sha256']}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "更新内容：",
+            "1. ",
+            "2. ",
+            "3. ",
+            "",
+        ]
+    )
+    readme_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def make_memory_report_title(role: str) -> str:
@@ -186,7 +261,9 @@ def main() -> int:
         "directory": package_dir.name,
         "artifacts": artifacts,
     }
+    build_time = make_build_time_text()
     write_manifest(package_dir, manifest)
+    write_package_readme(package_dir, manifest, build_time)
 
     print("firmware package: " + str(package_dir))
     print("version: " + version)

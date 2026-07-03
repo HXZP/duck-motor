@@ -7,9 +7,15 @@ extern "C" {
 
 #include <stdint.h>
 
-#define APP_VERSION_MAJOR    1u       /**< 主版本号，单位：无。 */
-#define APP_VERSION_MINOR    0u       /**< 次版本号，单位：无。 */
-#define APP_VERSION_PATCH    0u       /**< 修订版本号，单位：无。 */
+#define APP_VERSION_MAJOR    1        /**< 主版本号，单位：无。 */
+#define APP_VERSION_MINOR    0        /**< 次版本号，单位：无。 */
+#define APP_VERSION_PATCH    1        /**< 修订版本号，单位：无。 */
+
+#define APP_VERSION_STRING_VALUE(value)    #value
+#define APP_VERSION_STRING_MAKE(value)     APP_VERSION_STRING_VALUE(value)
+#define APP_VERSION_STRING                 APP_VERSION_STRING_MAKE(APP_VERSION_MAJOR) "." \
+                                           APP_VERSION_STRING_MAKE(APP_VERSION_MINOR) "." \
+                                           APP_VERSION_STRING_MAKE(APP_VERSION_PATCH)
 
 /**
  * @brief App 版本号。

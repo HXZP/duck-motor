@@ -1,6 +1,5 @@
 #include "app/app_version.h"
 
-#define APP_VERSION_STRING    "1.0.0"  /**< App 版本号字符串。 */
 
 /**
  * @brief 获取当前 App 版本号。
