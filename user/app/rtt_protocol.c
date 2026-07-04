@@ -3,7 +3,7 @@
 #include "can.h"
 #include "log.h"
 #include "flash.h"
-#include "foc_init.h"
+#include "foc_app.h"
 
 typedef enum {
     CMD_IDLE,

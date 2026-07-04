@@ -4,7 +4,7 @@
 #include "app/as5600.h"
 #include "app/app_light.h"
 #include "app/can_protocol.h"
-#include "app/foc_init.h"
+#include "app/foc_app.h"
 #include "app/log.h"
 #include "app/soft_iic.h"
 #include "kernel/pt-thread.h"
@@ -22,8 +22,8 @@ static THREAD_DEF(user_main_foc_thread)
 
     while (1)
     {
-        THREAD_WAIT_UNTIL(foc_update_is_pending() != 0);
-        foc_updata();
+        THREAD_WAIT_UNTIL(foc_app_update_is_pending() != 0);
+        foc_app_update();
     }
 
     THREAD_END();
@@ -87,7 +87,7 @@ void User_Main(void)
     AppLight_Init();
     I2C_Init();
     as5600Init();
-    foc_root_init();
+    foc_app_init();
     can_protocol_init();
     user_main_create_tasks();
     printf("App init done\r\n");

@@ -1,9 +1,12 @@
-#ifndef __FOC_INIT_H
-#define __FOC_INIT_H
+#ifndef FOC_APP_H
+#define FOC_APP_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <stdint.h>
 #include "foc/foc_core.h"
-#include "common/user_info.h"
 
 typedef enum
 {
@@ -16,26 +19,19 @@ typedef enum
  * @brief 初始化 FOC 控制运行环境。
  * @return void
  */
-void foc_root_init(void);
+void foc_app_init(void);
 
 /**
  * @brief 执行一次 FOC 周期调度。
  * @return int32_t 调度执行成功时返回 1，否则返回 0。
  */
-int32_t foc_updata(void);
+int32_t foc_app_update(void);
 
 /**
  * @brief 判断当前是否存在待处理的 FOC 调度请求。
  * @return int 存在待处理请求返回 1，否则返回 0。
  */
-int foc_update_is_pending(void);
-
-/**
- * @brief 使能或关闭功率输出。
- * @param enable 输出使能标志，0 表示关闭，非 0 表示使能。
- * @return void
- */
-void foc_output_enable(uint8_t enable);
+int foc_app_update_is_pending(void);
 
 /**
  * @brief 设置 FOC 的 d 轴、q 轴和电角度目标。
@@ -86,26 +82,6 @@ foc_ctrl_mode_t foc_control_mode_get(void);
  * @note 返回值已经过幅值限制，范围为 [-OUT_MAX, OUT_MAX]。
  */
 int32_t foc_current_set_target(int32_t target);
-
-/**
- * @brief 设置并应用 FOC 基础配置。
- * @param config FOC 基础配置。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
- */
-int foc_config_set(const user_info_foc_config_t *config);
-
-/**
- * @brief 获取当前 FOC 基础配置。
- * @param config FOC 基础配置输出缓冲区。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
- */
-int foc_config_get(user_info_foc_config_t *config);
-
-/**
- * @brief 预留的速度环控制接口。
- * @return void
- */
-void foc_speed_pid_ctrl(void);
 
 /**
  * @brief 设置速度环 PID 参数。
@@ -208,13 +184,10 @@ void foc_position_pid_get_target(float *target);
 
 extern foc_t foc;
 
-
-
-
-
-
-
-
+#ifdef __cplusplus
+}
 #endif
+
+#endif /* FOC_APP_H */
 
 

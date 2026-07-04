@@ -9,7 +9,7 @@ extern "C" {
 
 #define APP_VERSION_MAJOR    1        /**< 主版本号，单位：无。 */
 #define APP_VERSION_MINOR    0        /**< 次版本号，单位：无。 */
-#define APP_VERSION_PATCH    1        /**< 修订版本号，单位：无。 */
+#define APP_VERSION_PATCH    5        /**< 修订版本号，单位：无。 */
 
 #define APP_VERSION_STRING_VALUE(value)    #value
 #define APP_VERSION_STRING_MAKE(value)     APP_VERSION_STRING_VALUE(value)

@@ -3,7 +3,8 @@
 #include "app/app_light.h"
 #include "app/app_version.h"
 #include "app/flash.h"
-#include "app/foc_init.h"
+#include "app/foc_app.h"
+#include "app/foc_config.h"
 #include "app/log.h"
 #include "common/chip_uid.h"
 
@@ -1351,13 +1352,8 @@ void can_protocol_report_motor_state(void)
 
     can_protocol_next_motor_report_tick_ms = now_ms + can_protocol_report_period_ms;
 
-    report_data[0] = CAN_PROTOCOL_CMD_REPORT_POSITION;
-    can_protocol_encode_int32(&report_data[1], foc_get_angle(&foc));
-    can_protocol_send_frame(can_protocol_get_report_std_id(), report_data, CAN_PROTOCOL_FULL_DLC);
-
-    memset(report_data, 0, sizeof(report_data));
-    report_data[0] = CAN_PROTOCOL_CMD_REPORT_SPEED;
-    can_protocol_encode_int32(&report_data[1], foc_get_speed_estimate());
+    can_protocol_encode_int32(&report_data[0], foc_get_angle(&foc));
+    can_protocol_encode_int32(&report_data[4], foc_get_speed_estimate());
     can_protocol_send_frame(can_protocol_get_report_std_id(), report_data, CAN_PROTOCOL_FULL_DLC);
 }
 

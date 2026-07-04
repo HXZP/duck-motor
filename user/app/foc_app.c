@@ -1,83 +1,29 @@
-#include "foc_init.h"
-#include "foc/foc_core.h"
+#include "app/foc_app.h"
+
+#include "app/app_light.h"
+#include "app/can_protocol.h"
+#include "app/flash.h"
+#include "app/foc_config.h"
 #include "foc/foc_math.h"
 
-#include "as5600.h"
-#include "flash.h"
-#include "log.h"
-#include "can.h"
-#include "can_protocol.h"
-#include "app_light.h"
+#include "stm32f1xx_hal.h"
+#include "stm32f1xx_hal_tim.h"
 
-#include "stm32f1xx_hal.h"          // HAL库核心头文件
-#include "stm32f1xx_hal_tim.h"      // 定时器HAL库
-#include "stm32f1xx_hal_gpio.h"     // GPIO HAL库
-#include "stm32f1xx_hal_rcc.h"      // 时钟HAL库
+#include <stddef.h>
 #include <stdio.h>
 
-//extern DMA_HandleTypeDef hdma_adc1;
-extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 
-volatile uint8_t updata_flag = 0U;
-
-
-static void GPIO_Init(void);
-static int32_t foc_limit_target(int32_t target);
-static uint16_t foc_calc_loop_div(uint16_t target_hz);
-static void foc_apply_config(const user_info_foc_config_t *config);
-static void foc_map_phase_output(uint16_t a,
-                                 uint16_t b,
-                                 uint16_t c,
-                                 uint16_t *ch1,
-                                 uint16_t *ch2,
-                                 uint16_t *ch3);
+static volatile uint8_t foc_update_pending_flag = 0U;
 
 #define FOC_SCHEDULER_TICK_HZ      4000U
 #define FOC_SPEED_LOOP_HZ          100U
 #define FOC_POSITION_LOOP_HZ       25U
-
-/**
- * @brief 输出三相 PWM 占空比。
- * @param a A 相占空比。
- * @param b B 相占空比。
- * @param c C 相占空比。
- * @return void
- */
-void foc_output(uint16_t a, uint16_t b, uint16_t c)
-{
-    uint16_t ch1;
-    uint16_t ch2;
-    uint16_t ch3;
-
-    foc_map_phase_output(a, b, c, &ch1, &ch2, &ch3);
-
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ch1);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, ch2);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, ch3);
-}
+#define FOC_SPEED_SAMPLE_WINDOW    20U
 
 foc_t foc;
 static foc_ctrl_mode_t foc_control_mode = FOC_CTRL_MODE_SPEED;
 static int32_t foc_current_target = 0;
-
-foc_cfg_t cfg = {
-
-	.pole_pairs = USER_INFO_DEFAULT_POLE_PAIRS,
-	.master_voltage = USER_INFO_DEFAULT_MASTER_VOLTAGE_MV,
-
-	.control_hz = USER_INFO_DEFAULT_CONTROL_HZ,
-	.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ,
-    .phase_map = USER_INFO_DEFAULT_PHASE_MAP,
-
-	.pwm_period = 1600,
-	.pwm_hz = 20000,
-
-    .output = foc_output,
-    .delay = HAL_Delay,
-    .get_angle_rad = as5600GetAngleRadians,
-    .get_time = HAL_GetTick,
-};
 
 /**
  * @brief 执行零点重新标定。
@@ -187,154 +133,14 @@ static uint16_t foc_calc_loop_div(uint16_t target_hz)
     return (uint16_t)div;
 }
 
-/**
- * @brief 按相序映射计算 TIM 物理通道占空比。
- * @param a A 相占空比，单位：计数。
- * @param b B 相占空比，单位：计数。
- * @param c C 相占空比，单位：计数。
- * @param ch1 TIM1 CH1 占空比输出指针，单位：计数。
- * @param ch2 TIM1 CH2 占空比输出指针，单位：计数。
- * @param ch3 TIM1 CH3 占空比输出指针，单位：计数。
- * @return void
- */
-static void foc_map_phase_output(uint16_t a,
-                                 uint16_t b,
-                                 uint16_t c,
-                                 uint16_t *ch1,
-                                 uint16_t *ch2,
-                                 uint16_t *ch3)
-{
-    if ((ch1 == NULL) || (ch2 == NULL) || (ch3 == NULL))
-    {
-        return;
-    }
-
-    switch (cfg.phase_map)
-    {
-        case 1u:
-        {
-            *ch1 = a;
-            *ch2 = c;
-            *ch3 = b;
-            break;
-        }
-
-        case 2u:
-        {
-            *ch1 = b;
-            *ch2 = a;
-            *ch3 = c;
-            break;
-        }
-
-        case 3u:
-        {
-            *ch1 = b;
-            *ch2 = c;
-            *ch3 = a;
-            break;
-        }
-
-        case 4u:
-        {
-            *ch1 = c;
-            *ch2 = a;
-            *ch3 = b;
-            break;
-        }
-
-        case 5u:
-        {
-            *ch1 = c;
-            *ch2 = b;
-            *ch3 = a;
-            break;
-        }
-
-        case 0u:
-        default:
-        {
-            *ch1 = a;
-            *ch2 = b;
-            *ch3 = c;
-            break;
-        }
-    }
-}
-
-/**
- * @brief 应用 FOC 基础配置到运行配置。
- * @param config FOC 基础配置。
- * @return void
- */
-static void foc_apply_config(const user_info_foc_config_t *config)
-{
-    user_info_foc_config_t normalized_config;
-
-    if (config == NULL)
-    {
-        return;
-    }
-
-    normalized_config = *config;
-    UserInfo_NormalizeFocConfig(&normalized_config);
-    cfg.pole_pairs = (uint8_t)normalized_config.pole_pairs;
-    cfg.master_voltage = (int32_t)normalized_config.master_voltage_mv;
-    cfg.control_hz = (uint16_t)normalized_config.control_hz;
-    cfg.sensor_hz = (uint16_t)normalized_config.sensor_hz;
-    cfg.phase_map = (uint8_t)normalized_config.phase_map;
-}
-
-/**
- * @brief 设置并应用 FOC 基础配置。
- * @param config FOC 基础配置。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
- */
-int foc_config_set(const user_info_foc_config_t *config)
-{
-    int ret;
-
-    ret = UserInfo_ValidateFocConfig(config);
-    if (ret != USER_INFO_OK)
-    {
-        return ret;
-    }
-
-    foc_apply_config(config);
-    foc.info.master_voltage = cfg.master_voltage;
-    foc.info.vector_voltage = OUT_MAX;
-    foc.info.pole_pairs = cfg.pole_pairs;
-    return USER_INFO_OK;
-}
-
-/**
- * @brief 获取当前 FOC 基础配置。
- * @param config FOC 基础配置输出缓冲区。
- * @return int 成功返回 USER_INFO_OK，失败返回 USER_INFO_ERR_xxx。
- */
-int foc_config_get(user_info_foc_config_t *config)
-{
-    if (config == NULL)
-    {
-        return USER_INFO_ERR_PARAM;
-    }
-
-    config->pole_pairs = cfg.pole_pairs;
-    config->master_voltage_mv = (uint32_t)cfg.master_voltage;
-    config->control_hz = cfg.control_hz;
-    config->sensor_hz = cfg.sensor_hz;
-    config->phase_map = cfg.phase_map;
-    return USER_INFO_OK;
-}
-
-foc_pid_t angle_pid = {
+static foc_pid_t angle_pid = {
 
     .target = 0,
     .p = 0.0f,
     .out_max = 0
 };
 
-foc_pid_t speed_pid = {
+static foc_pid_t speed_pid = {
 
     .p = 0,
     .i = 0,
@@ -342,19 +148,151 @@ foc_pid_t speed_pid = {
     .out_max = 0,
 };
 
-#define EXT_SPEED_LEN 20
-uint16_t angle_recoder[EXT_SPEED_LEN];
-uint8_t angle_idex = 0;
-uint8_t angle_first_idex = 0;
-uint8_t angle_init = 0;
-float speed = 0;
+static uint16_t foc_speed_angle_samples[FOC_SPEED_SAMPLE_WINDOW];
+static uint32_t foc_speed_time_samples[FOC_SPEED_SAMPLE_WINDOW];
+static uint8_t foc_speed_sample_index = 0U;
+static uint8_t foc_speed_window_ready = 0U;
+static float foc_speed_estimate = 0.0f;
+
+/**
+ * @brief 根据角度差和实际时间间隔计算机械速度。
+ * @param delta 机械角度差，单位：mrad。
+ * @param elapsed_ms 实际时间间隔，单位：ms。
+ * @return float 机械速度，单位：mrad/s。
+ */
+static float foc_calc_speed_mrad_s(int32_t delta, uint32_t elapsed_ms)
+{
+    if (elapsed_ms == 0U)
+    {
+        return 0.0f;
+    }
+
+    return ((float)delta * 1000.0f) / (float)elapsed_ms;
+}
+
+/**
+ * @brief 计算跨零后的机械角度差。
+ * @param current_angle 当前机械角度，单位：mrad。
+ * @param previous_angle 历史机械角度，单位：mrad。
+ * @return int32_t 归一化后的角度差，单位：mrad。
+ */
+static int32_t foc_calc_angle_delta(int32_t current_angle, int32_t previous_angle)
+{
+    int32_t delta;
+
+    delta = current_angle - previous_angle;
+
+    if (delta > FOC_PIx1000)
+    {
+        delta -= 2 * FOC_PIx1000;
+    }
+    else
+    {
+        if (delta < (-FOC_PIx1000))
+        {
+            delta += 2 * FOC_PIx1000;
+        }
+    }
+
+    return delta;
+}
+
+/**
+ * @brief 根据传感器采样历史更新速度估计值。
+ * @return void
+ * @note 当前窗口为 20 个传感器采样点；默认 2000Hz 采样时，估计窗口约为 10ms。
+ */
+static void foc_update_speed_estimate(void)
+{
+    int32_t current_angle;
+    int32_t delta;
+    uint32_t current_time_ms;
+    uint32_t elapsed_ms;
+    uint8_t history_index;
+
+    current_angle = foc_get_angle(&foc);
+    current_time_ms = foc.cfg->get_time();
+    foc_speed_angle_samples[foc_speed_sample_index] = (uint16_t)current_angle;
+    foc_speed_time_samples[foc_speed_sample_index] = current_time_ms;
+
+    if (foc_speed_window_ready == 0U)
+    {
+        if (foc_speed_sample_index == 0U)
+        {
+            foc_speed_estimate = 0.0f;
+        }
+        else
+        {
+            delta = foc_calc_angle_delta(current_angle, foc_speed_angle_samples[0]);
+            elapsed_ms = current_time_ms - foc_speed_time_samples[0];
+            foc_speed_estimate = foc_calc_speed_mrad_s(delta, elapsed_ms);
+        }
+
+        if (foc_speed_sample_index == (FOC_SPEED_SAMPLE_WINDOW - 2U))
+        {
+            foc_speed_window_ready = 1U;
+        }
+    }
+    else
+    {
+        history_index = foc_speed_sample_index + 1U;
+
+        if (history_index == FOC_SPEED_SAMPLE_WINDOW)
+        {
+            history_index = 0U;
+        }
+
+        delta = foc_calc_angle_delta(current_angle, foc_speed_angle_samples[history_index]);
+        elapsed_ms = current_time_ms - foc_speed_time_samples[history_index];
+        foc_speed_estimate = foc_calc_speed_mrad_s(delta, elapsed_ms);
+    }
+
+    foc_speed_sample_index++;
+
+    if (foc_speed_sample_index == FOC_SPEED_SAMPLE_WINDOW)
+    {
+        foc_speed_sample_index = 0U;
+    }
+}
+
+/**
+ * @brief 执行速度环调度。
+ * @return void
+ * @note 电流模式下跳过速度 PID，避免覆盖 CAN 下发的电流目标。
+ */
+static void foc_run_speed_loop(void)
+{
+    if (foc_control_mode != FOC_CTRL_MODE_CURRENT)
+    {
+        int32_t out = 0;
+
+        foc_percent_update(&speed_pid, foc_speed_estimate);
+        out = (int32_t)pid_speed_ctrl(&speed_pid);
+        foc_set_target(0, out, 0);
+    }
+
+    foc_speed_updata(&foc);
+}
+
+/**
+ * @brief 执行位置环调度。
+ * @return void
+ */
+static void foc_run_position_loop(void)
+{
+    float out = 0.0f;
+
+    foc_percent_update(&angle_pid, foc_get_angle(&foc));
+    out = pid_angle_ctrl(&angle_pid);
+    foc_speed_pid_set_target(out);
+}
 
 /**
  * @brief 执行 FOC 周期调度。
  * @return int32_t 处理了一个调度 tick 返回 1，否则返回 0。
- * @note TIM2 基准频率为 4000Hz，控制环和传感器采样由 cfg.control_hz 与 cfg.sensor_hz 决定。
+ * @note TIM2 基准频率为 4000Hz，控制环和传感器采样由运行配置决定。
  */
-int32_t foc_updata(void)
+int32_t foc_app_update(void)
 {
     static uint16_t scheduler_tick = 0;
     const uint16_t control_div = foc_calc_loop_div(foc.cfg->control_hz);
@@ -366,7 +304,7 @@ int32_t foc_updata(void)
     uint8_t speed_loop_due = 0U;
     uint8_t position_loop_due = 0U;
 
-    if (updata_flag == 0U)
+    if (foc_update_pending_flag == 0U)
     {
         return 0;
     }
@@ -381,96 +319,18 @@ int32_t foc_updata(void)
     if (sensor_loop_due != 0U)
     {
         foc_sensor_updata(&foc);
-
-        angle_recoder[angle_idex] = foc_get_angle(&foc);
-
-        if (angle_init == 0U)
-        {
-            if (angle_idex == 0U)
-            {
-                speed = 0.0f;
-            }
-            else
-            {
-                int16_t speed_delta = angle_recoder[angle_idex] - angle_recoder[0];
-
-                if (speed_delta > FOC_PIx1000)
-                {
-                    speed_delta -= 2 * FOC_PIx1000;
-                }
-                else
-                {
-                    if (speed_delta < (-FOC_PIx1000))
-                    {
-                        speed_delta += 2 * FOC_PIx1000;
-                    }
-                }
-                speed = (float)speed_delta / angle_idex * 2.0f;
-            }
-
-            if (angle_idex == (EXT_SPEED_LEN - 2U))
-            {
-                angle_init = 1U;
-            }
-        }
-        else
-        {
-            int16_t speed_delta;
-
-            angle_first_idex = angle_idex + 1U;
-
-            if (angle_first_idex == EXT_SPEED_LEN)
-            {
-                angle_first_idex = 0U;
-            }
-
-            speed_delta = angle_recoder[angle_idex] - angle_recoder[angle_first_idex];
-
-            if (speed_delta > FOC_PIx1000)
-            {
-                speed_delta -= 2 * FOC_PIx1000;
-            }
-            else
-            {
-                if (speed_delta < (-FOC_PIx1000))
-                {
-                    speed_delta += 2 * FOC_PIx1000;
-                }
-            }
-            speed = (float)speed_delta / EXT_SPEED_LEN * 2.0f;
-        }
-
-        angle_idex++;
-
-        if (angle_idex == EXT_SPEED_LEN)
-        {
-            angle_idex = 0U;
-        }
+        foc_update_speed_estimate();
     }
 
     if (speed_loop_due != 0U)
     {
-        if (foc_control_mode != FOC_CTRL_MODE_CURRENT)
-        {
-            int32_t out = 0;
-
-            foc_percent_update(&speed_pid, speed);
-            out = (int32_t)pid_speed_ctrl(&speed_pid);
-            foc_set_target(0, out, 0);
-        }
-
-        foc_speed_updata(&foc);
-        can_protocol_report_motor_state();
+        foc_run_speed_loop();
     }
 
     if ((position_loop_due != 0U)
         && (foc_control_mode == FOC_CTRL_MODE_POSITION))
     {
-        float out = 0.0f;
-
-        foc_percent_update(&angle_pid, foc_get_angle(&foc));
-        out = pid_angle_ctrl(&angle_pid);
-        foc_speed_pid_set_target(out);
+        foc_run_position_loop();
     }
 
     if (control_loop_due != 0U)
@@ -478,31 +338,25 @@ int32_t foc_updata(void)
         foc_control(&foc);
     }
 
+    can_protocol_report_motor_state();
+
     if (scheduler_tick >= FOC_SCHEDULER_TICK_HZ)
     {
         scheduler_tick = 0U;
     }
 
-    updata_flag = 0U;
+    foc_update_pending_flag = 0U;
 
     return 1;
 }
 
 /**
- * @brief 初始化 FOC 运行环境。
- * @return void
- */
-/**
  * @brief 判断当前是否存在待处理的 FOC 调度请求。
  * @return int 存在待处理请求返回 1，否则返回 0。
  */
-/**
- * @brief 判断当前是否存在待处理的 FOC 调度请求。
- * @return int 存在待处理请求返回 1，否则返回 0。
- */
-int foc_update_is_pending(void)
+int foc_app_update_is_pending(void)
 {
-    if (updata_flag != 0U)
+    if (foc_update_pending_flag != 0U)
     {
         return 1;
     }
@@ -510,31 +364,22 @@ int foc_update_is_pending(void)
     return 0;
 }
 
-void foc_root_init(void)
+/**
+ * @brief 初始化 FOC 运行环境。
+ * @return void
+ */
+void foc_app_init(void)
 {
-    user_info_foc_config_t foc_config;
-
-    if (Flash_LoadFocConfig(&foc_config) == USER_INFO_OK)
-    {
-        foc_apply_config(&foc_config);
-    }
-
-    foc_init(&foc,&cfg);
-
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
-    __HAL_TIM_MOE_ENABLE(&htim1);
-
-    GPIO_Init();
-
-    foc_output_enable(1);
-
     recoder_data data = {0};
-    if(Load_Recoder(&data))
+
+    foc_config_load_saved();
+    foc_init(&foc, &foc_runtime_config);
+    foc_config_start_pwm();
+
+    if (Load_Recoder(&data) != 0U)
     {
         foc_zero_reset_manual(&foc, data.calibration_angle);
-        printf("zero angle loaded: %d\n", data.calibration_angle);
+        printf("zero angle loaded: %ld\n", (long)data.calibration_angle);
     }
     else
     {
@@ -550,14 +395,11 @@ void foc_root_init(void)
         data.sensor_hz = USER_INFO_DEFAULT_SENSOR_HZ;
         data.phase_map = USER_INFO_DEFAULT_PHASE_MAP;
         Save_Recoder(data);
-        printf("zero angle saved: %d\n", data.calibration_angle);
+        printf("zero angle saved: %ld\n", (long)data.calibration_angle);
     }
 
     HAL_TIM_Base_Start_IT(&htim2);
 }
-
-
-
 /**
  * @brief 设置电流模式下的 q 轴目标值。
  * @param target 电流目标值，对应 q 轴内部控制量。
@@ -594,20 +436,6 @@ void foc_set_target(int32_t d_target, int32_t q_target, int32_t theta_target)
     foc_target_updata(&foc, target);
 }
 
-void foc_output_enable(uint8_t enable)
-{
-    if (enable != 0U)
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_SET);
-    }
-    else
-    {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
-    }
-}
-
 /**
  * @brief 定时器周期回调函数。
  * @param htim 定时器句柄指针。
@@ -618,31 +446,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if (htim->Instance == TIM2)
     {
         AppLight_Poll();
-        updata_flag = 1;
+        foc_update_pending_flag = 1U;
     }
 }
-
-//GPIO_PIN_14 Logic high enables OUT. Internalpulldown
-//GPIO_PIN_3 Active-low reset input initializesinternal logicanddisablesthe
-static void GPIO_Init(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : LED_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_14 | GPIO_PIN_3;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
 
 /**
  * @brief 设置速度环 PID 参数。
@@ -757,7 +563,7 @@ void foc_speed_pid_get_target(float *target)
  */
 int32_t foc_get_speed_estimate(void)
 {
-    return (int32_t)speed;
+    return (int32_t)foc_speed_estimate;
 }
 
 /**
