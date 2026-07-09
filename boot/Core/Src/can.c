@@ -26,7 +26,11 @@
 
 CAN_HandleTypeDef hcan;
 
-/* CAN init function */
+/**
+  * @brief 初始化 Boot CAN 外设。
+  * @return void
+  * @note APB1 时钟为 32MHz，Prescaler=4 且总时间片为 8TQ 时 CAN 波特率为 1Mbps。
+  */
 void MX_CAN_Init(void)
 {
 
@@ -38,7 +42,7 @@ void MX_CAN_Init(void)
 
   /* USER CODE END CAN_Init 1 */
   hcan.Instance = CAN1;
-  hcan.Init.Prescaler = 8;
+  hcan.Init.Prescaler = 4;
   hcan.Init.Mode = CAN_MODE_NORMAL;
   hcan.Init.SyncJumpWidth = CAN_SJW_1TQ;
   hcan.Init.TimeSeg1 = CAN_BS1_5TQ;

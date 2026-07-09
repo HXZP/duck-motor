@@ -14,11 +14,32 @@ import sys
 
 DEFAULT_DEVICE = "STM32F103C8"
 DEFAULT_ADDRESS = "0x08000000"
+DEFAULT_ERASE_START = DEFAULT_ADDRESS
+DEFAULT_ERASE_END = "0x0800FBFF"
+DEFAULT_PRESERVE_START = "0x0800FC00"
 DEFAULT_JLINK_SPEED_KHZ = "4000"
 DEFAULT_JLINK_PATHS = [
     r"C:\Program Files\SEGGER\JLink\JLink.exe",
     r"C:\Program Files\SEGGER\JLink_V922\JLink.exe",
 ]
+
+
+def parse_int(text: str) -> int:
+    """
+    @brief 解析十进制或十六进制整数。
+    @param text 待解析文本。
+    @return 返回解析后的整数值。
+    """
+    return int(text, 0)
+
+
+def format_hex(value: int) -> str:
+    """
+    @brief 将整数格式化为 J-Link 使用的十六进制地址。
+    @param value 待格式化整数。
+    @return 返回十六进制地址字符串。
+    """
+    return f"0x{value:08X}"
 
 
 def get_workspace_root() -> Path:
@@ -222,6 +243,73 @@ def resolve_interactive_image_path(workspace_root: Path) -> Path:
     return selected["full_bin"]
 
 
+def validate_image_preserve_area(
+    image_path: Path,
+    address: str,
+    preserve_start: str,
+) -> None:
+    """
+    @brief 检查待烧录镜像不会覆盖需要保留的 Flash 存储区。
+    @param image_path 待烧录镜像路径。
+    @param address 烧录起始地址。
+    @param preserve_start 需要保留的 Flash 起始地址。
+    @return 无。
+    """
+    start_address = parse_int(address)
+    preserve_address = parse_int(preserve_start)
+    image_size = image_path.stat().st_size
+    image_end = start_address + image_size
+
+    if image_end > preserve_address:
+        raise RuntimeError(
+            "待烧录镜像会覆盖用户存储区: "
+            + "image=["
+            + format_hex(start_address)
+            + ", "
+            + format_hex(image_end)
+            + "), preserve_start="
+            + format_hex(preserve_address)
+        )
+
+
+def validate_erase_preserve_area(
+    erase_start: str,
+    erase_end: str,
+    preserve_start: str,
+) -> None:
+    """
+    @brief 检查擦除范围不会触碰需要保留的 Flash 存储区。
+    @param erase_start 擦除起始地址。
+    @param erase_end 擦除结束地址。
+    @param preserve_start 需要保留的 Flash 起始地址。
+    @return 无。
+    @note J-Link erase 结束地址按包含关系处理，所以结束地址必须小于保留区起始地址。
+    """
+    start_address = parse_int(erase_start)
+    end_address = parse_int(erase_end)
+    preserve_address = parse_int(preserve_start)
+
+    if end_address < start_address:
+        raise RuntimeError(
+            "擦除范围无效: "
+            + "erase_start="
+            + format_hex(start_address)
+            + ", erase_end="
+            + format_hex(end_address)
+        )
+
+    if end_address >= preserve_address:
+        raise RuntimeError(
+            "擦除范围会覆盖用户存储区: "
+            + "erase=["
+            + format_hex(start_address)
+            + ", "
+            + format_hex(end_address)
+            + "], preserve_start="
+            + format_hex(preserve_address)
+        )
+
+
 def find_jlink(requested_flash_exe: str) -> str:
     """
     @brief 查找当前系统可用的 J-Link 可执行文件。
@@ -255,6 +343,8 @@ def build_jlink_lines(
     device: str,
     speed: str,
     skip_verify: bool,
+    erase_start: str,
+    erase_end: str,
 ) -> list[str]:
     """
     @brief 生成 J-Link Commander 烧录命令。
@@ -263,6 +353,8 @@ def build_jlink_lines(
     @param device J-Link 设备型号。
     @param speed SWD 速率，单位：kHz。
     @param skip_verify 是否跳过 verifybin 校验。
+    @param erase_start 擦除起始地址。
+    @param erase_end 擦除结束地址。
     @return 返回 J-Link Commander 命令列表。
     """
     lines = [
@@ -271,7 +363,7 @@ def build_jlink_lines(
         "device " + device,
         "r",
         "h",
-        "erase",
+        "erase " + erase_start + ", " + erase_end,
         "loadbin \"" + str(image_path) + "\", " + address,
     ]
 
@@ -339,6 +431,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image", default="", help="待烧录 full bin 镜像路径。")
     parser.add_argument("--version", default="", help="从根目录 firmware_package 选择待烧录版本。")
     parser.add_argument("--address", default=DEFAULT_ADDRESS, help="烧录起始地址。")
+    parser.add_argument("--erase-start", default=DEFAULT_ERASE_START, help="擦除起始地址。")
+    parser.add_argument("--erase-end", default=DEFAULT_ERASE_END, help="擦除结束地址。")
+    parser.add_argument(
+        "--preserve-start",
+        default=DEFAULT_PRESERVE_START,
+        help="需要保留的用户存储区起始地址。",
+    )
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="J-Link 设备型号。")
     parser.add_argument("--speed", default=DEFAULT_JLINK_SPEED_KHZ, help="SWD 速率，单位：kHz。")
     parser.add_argument("--flash-exe", default="", help="JLink/JLinkExe 可执行文件路径。")
@@ -368,17 +467,23 @@ def main() -> int:
     if not image_path.is_file():
         raise FileNotFoundError("找不到待烧录镜像: " + str(image_path))
 
+    validate_erase_preserve_area(args.erase_start, args.erase_end, args.preserve_start)
+    validate_image_preserve_area(image_path, args.address, args.preserve_start)
     lines = build_jlink_lines(
         image_path,
         args.address,
         args.device,
         args.speed,
         args.skip_verify,
+        args.erase_start,
+        args.erase_end,
     )
 
     print("Device : " + args.device)
     print("Image  : " + str(image_path))
     print("Address: " + args.address)
+    print("Erase  : " + args.erase_start + " ~ " + args.erase_end)
+    print("Preserve start: " + args.preserve_start)
     return run_jlink_script(script_path, lines, args.flash_exe, args.list_only)
 
 

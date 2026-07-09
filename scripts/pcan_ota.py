@@ -37,7 +37,10 @@ OTA_REQUEST_PREFIX = bytes([0x7F, 0x5A, 0xA5])
 DEFAULT_NODE_ID = 0x7E
 DEFAULT_OTA_REQUEST_TARGET = 0x0A
 DEFAULT_FRAME_DELAY_MS = 1.0
-DEFAULT_BITRATE = "500k"
+DEFAULT_APP_BITRATE = "1m"
+DEFAULT_OTA_BITRATE = "1m"
+DEFAULT_BITRATE = DEFAULT_OTA_BITRATE
+DEFAULT_QUIESCE_NODE_IDS = tuple(range(1, 8))
 
 
 @dataclass(frozen=True)
@@ -46,7 +49,8 @@ class OtaConfig:
 
     firmware_path: Path
     channel: int | None
-    bitrate: str
+    app_bitrate: str
+    ota_bitrate: str
     node_id: int
     request_target: int
     frame_delay_ms: float
@@ -56,6 +60,7 @@ class OtaConfig:
     cancel_first: bool
     post_check: bool
     allow_unconfigured: bool
+    quiesce_reports: bool
     verbose: bool
     dll_path: Path | None
 
@@ -64,15 +69,15 @@ class PcanOtaClient:
     """PCAN OTA 执行器。"""
 
     def __init__(self, config: OtaConfig):
-        """初始化 PCAN OTA 执行器。
-
-        Args:
-            config: OTA 测试配置。
+        """
+        @brief 初始化 PCAN OTA 执行器。
+        @param config OTA 测试配置。
         """
 
         self.config = config
         self.pcan = PcanBasic(config.dll_path)
         self.channel = 0
+        self.current_bitrate = ""
         self.command_id = 0x100 + config.node_id
         self.response_id = 0x180 + config.node_id
         self.ota_control_id = 0x400 + config.node_id
@@ -99,7 +104,10 @@ class PcanOtaClient:
             self.log(message)
 
     def open(self) -> None:
-        """打开 PCAN 通道。"""
+        """
+        @brief 按 App 通信波特率打开 PCAN 通道。
+        @return void
+        """
 
         self.pcan.uninitialize()
         if self.config.channel is None:
@@ -110,18 +118,42 @@ class PcanOtaClient:
         else:
             self.channel = self.config.channel
 
-        self.pcan.initialize(self.channel, self.config.bitrate)
+        self.pcan.initialize(self.channel, self.config.app_bitrate)
+        self.current_bitrate = self.config.app_bitrate
         self.log(
             f"PCAN 已打开: channel=0x{self.channel:02X} "
-            f"bitrate={self.config.bitrate}"
+            f"bitrate={self.config.app_bitrate}"
         )
 
     def close(self) -> None:
-        """关闭 PCAN 通道。"""
+        """
+        @brief 关闭 PCAN 通道。
+        @return void
+        """
 
         if self.channel != 0:
             self.pcan.uninitialize(self.channel)
+            self.current_bitrate = ""
             self.log("PCAN 已关闭")
+
+    def switch_bitrate(self, bitrate: str, label: str) -> None:
+        """
+        @brief 切换当前 PCAN 通道波特率。
+        @param bitrate 目标 CAN 波特率字符串。
+        @param label 切换阶段说明。
+        @return void
+        """
+
+        if self.current_bitrate == bitrate:
+            return
+
+        if self.channel == 0:
+            raise RuntimeError("PCAN 通道尚未打开，无法切换波特率")
+
+        self.pcan.uninitialize(self.channel)
+        self.pcan.initialize(self.channel, bitrate)
+        self.current_bitrate = bitrate
+        self.log(f"PCAN 波特率切换: {label}, bitrate={bitrate}")
 
     def drain(self) -> int:
         """清空 PCAN 接收队列。
@@ -236,6 +268,116 @@ class PcanOtaClient:
             f"data={format_data(request)}"
         )
 
+    def wait_app_ota_ack(self, timeout_s: float) -> bool:
+        """
+        @brief 等待 App 对进入 Boot OTA 命令的应答。
+        @param timeout_s 超时时间，单位：秒。
+        @return bool 收到成功应答返回 True，否则返回 False。
+        """
+
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            frame = self.read_frame(min(0.1, max(0.0, deadline - time.time())))
+            if frame is None:
+                continue
+
+            if frame.std_id in (
+                self.response_id,
+                self.manage_report_id,
+                0x180 + DEFAULT_NODE_ID,
+            ):
+                self.log(f"APP RX 0x{frame.std_id:03X}: {format_data(frame.data)}")
+            else:
+                self.debug(f"APP RX 0x{frame.std_id:03X}: {format_data(frame.data)}")
+
+            if frame.std_id != self.response_id:
+                continue
+
+            if len(frame.data) < 2:
+                continue
+
+            if frame.data[0] != 0x40:
+                continue
+
+            return frame.data[1] == 0x00
+
+        return False
+
+    def send_report_config(self, node_id: int, enabled: bool, period_ms: int) -> None:
+        """
+        @brief 发送 App 主动上报配置命令。
+        @param node_id 目标节点 ID，单位：无。
+        @param enabled 主动上报使能标志。
+        @param period_ms 主动上报周期，单位：毫秒。
+        @return void
+        """
+
+        data = bytes(
+            [
+                0x23,
+                0x01 if enabled else 0x00,
+                period_ms & 0xFF,
+                (period_ms >> 8) & 0xFF,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+            ]
+        )
+        self.write_frame(0x100 + node_id, data)
+
+    def quiesce_motor_reports(self) -> None:
+        """
+        @brief 关闭常见业务节点主动上报，降低 OTA 期间总线占用。
+        @return void
+        """
+
+        if not self.config.quiesce_reports:
+            return
+
+        if self.config.app_bitrate != self.config.ota_bitrate:
+            self.switch_bitrate(self.config.app_bitrate, "App 上报静默阶段")
+
+        self.drain()
+        for node_id in DEFAULT_QUIESCE_NODE_IDS:
+            self.send_report_config(node_id, False, 10)
+            time.sleep(0.02)
+
+        ack_deadline = time.time() + 0.5
+        ack_count = 0
+        while time.time() < ack_deadline:
+            frame = self.read_frame(min(0.05, max(0.0, ack_deadline - time.time())))
+            if frame is None:
+                continue
+
+            if (0x180 < frame.std_id < 0x188) and (len(frame.data) >= 2):
+                if (frame.data[0] == 0x23) and (frame.data[1] == 0x00):
+                    ack_count += 1
+                    self.debug(
+                        f"已关闭节点 0x{frame.std_id - 0x180:02X} 主动上报"
+                    )
+
+        self.log(f"OTA 前主动上报静默完成: ack={ack_count}")
+
+    def request_boot_ota_from_app(self) -> bool:
+        """
+        @brief 使用 App 通信波特率请求设备进入 Boot OTA。
+        @return bool 收到 App 成功应答返回 True，否则返回 False。
+        """
+
+        self.switch_bitrate(self.config.app_bitrate, "App OTA 入口阶段")
+        self.drain()
+        self.send_ota_request()
+        if self.config.app_bitrate == self.config.ota_bitrate:
+            return False
+
+        if self.wait_app_ota_ack(1.5):
+            self.log("App 已确认进入 Boot OTA")
+            return True
+
+        self.log("未收到 App OTA 应答，继续切到 Boot 波特率等待")
+        return False
+
     def send_cancel(self) -> None:
         """发送 YMODEM 取消序列。"""
 
@@ -319,10 +461,9 @@ class PcanOtaClient:
         self.log(f"OTA 后 App 版本: {version[0]}.{version[1]}.{version[2]}")
 
     def run(self) -> int:
-        """执行完整 OTA 流程。
-
-        Returns:
-            成功返回 0。
+        """
+        @brief 执行完整 OTA 流程。
+        @return int 成功返回 0。
         """
 
         app_image = self.config.firmware_path.read_bytes()
@@ -336,23 +477,44 @@ class PcanOtaClient:
             f"App大小={len(app_image)} 字节, "
             f"YMODEM文件大小={total_size} 字节, "
             f"数据包={packet_count}, "
-            f"帧间隔={self.config.frame_delay_ms:.2f} ms"
+            f"帧间隔={self.config.frame_delay_ms:.2f} ms, "
+            f"App波特率={self.config.app_bitrate}, "
+            f"OTA波特率={self.config.ota_bitrate}"
         )
 
         self.open()
         try:
             self.drain()
-            if self.config.cancel_first:
+            self.quiesce_motor_reports()
+            if (
+                self.config.cancel_first
+                and (self.config.app_bitrate == self.config.ota_bitrate)
+            ):
                 self.send_cancel()
                 time.sleep(0.3)
                 self.drain()
 
-            self.send_ota_request()
-            self.wait_response_byte(
-                ymodem.CRC_REQUEST,
-                self.config.start_timeout_s,
-                "Boot YMODEM 起始 C",
-            )
+            self.request_boot_ota_from_app()
+            self.switch_bitrate(self.config.ota_bitrate, "Boot OTA 数据阶段")
+
+            try:
+                self.wait_response_byte(
+                    ymodem.CRC_REQUEST,
+                    self.config.start_timeout_s,
+                    "Boot YMODEM 起始 C",
+                )
+            except TimeoutError:
+                if self.config.app_bitrate == self.config.ota_bitrate:
+                    raise
+
+                self.log("未收到 Boot 起始 C，切回 App 波特率重新发送入口请求")
+                self.request_boot_ota_from_app()
+                self.switch_bitrate(self.config.ota_bitrate, "Boot OTA 数据阶段重试")
+                self.wait_response_byte(
+                    ymodem.CRC_REQUEST,
+                    self.config.start_timeout_s,
+                    "Boot YMODEM 起始 C",
+                )
 
             self.log("发送 YMODEM 文件头")
             self.send_stream(ymodem.build_header_packet(file_name, total_size))
@@ -396,6 +558,8 @@ class PcanOtaClient:
             self.wait_response_byte(ymodem.ACK, self.config.packet_timeout_s, "结束空头 ACK")
 
             if self.config.post_check:
+                self.switch_bitrate(self.config.app_bitrate, "App 回跳检查阶段")
+                self.drain()
                 self.run_post_check()
 
             self.log("OTA 完成")
@@ -441,13 +605,10 @@ def resolve_default_firmware() -> Path:
 
 
 def parse_args(argv: list[str]) -> OtaConfig:
-    """解析命令行参数。
-
-    Args:
-        argv: 命令行参数列表。
-
-    Returns:
-        OTA 测试配置。
+    """
+    @brief 解析命令行参数。
+    @param argv 命令行参数列表。
+    @return OtaConfig OTA 测试配置。
     """
 
     parser = argparse.ArgumentParser(description="motor_duck PCAN OTA 工具")
@@ -458,7 +619,21 @@ def parse_args(argv: list[str]) -> OtaConfig:
         help="OTA App 固件路径，默认使用 bazel-bin/ota_app_release.bin",
     )
     parser.add_argument("--channel", default="auto", help="PCAN 通道，例如 auto、usb1、0x51")
-    parser.add_argument("--bitrate", default=DEFAULT_BITRATE, help="CAN 波特率，默认 500k")
+    parser.add_argument(
+        "--app-bitrate",
+        default=DEFAULT_APP_BITRATE,
+        help="App 通信波特率，默认 1m",
+    )
+    parser.add_argument(
+        "--ota-bitrate",
+        default=None,
+        help="Boot OTA 数据传输波特率，默认 1m",
+    )
+    parser.add_argument(
+        "--bitrate",
+        default=None,
+        help="兼容旧参数，等同于 --ota-bitrate",
+    )
     parser.add_argument("--node", type=parse_int, default=DEFAULT_NODE_ID, help="OTA 节点 ID")
     parser.add_argument(
         "--request-target",
@@ -479,11 +654,18 @@ def parse_args(argv: list[str]) -> OtaConfig:
     parser.add_argument("--no-cancel-first", action="store_true", help="启动前不发送取消序列")
     parser.add_argument("--no-post-check", action="store_true", help="完成后不等待 App 管理上报")
     parser.add_argument("--allow-unconfigured", action="store_true", help="允许对未配置管理节点 0x7E 发起 OTA")
+    parser.add_argument("--no-quiesce-reports", action="store_true", help="OTA 前不关闭其它节点主动上报")
     parser.add_argument("--verbose", action="store_true", help="打印详细 CAN 帧日志")
     parser.add_argument("--list-channels", action="store_true", help="列出 PCAN 通道后退出")
 
     args = parser.parse_args(argv)
     firmware_path = args.file if args.file is not None else resolve_default_firmware()
+    ota_bitrate = args.ota_bitrate
+    if ota_bitrate is None:
+        ota_bitrate = args.bitrate
+
+    if ota_bitrate is None:
+        ota_bitrate = DEFAULT_OTA_BITRATE
 
     if args.list_channels:
         pcan = PcanBasic(args.dll)
@@ -504,7 +686,8 @@ def parse_args(argv: list[str]) -> OtaConfig:
     return OtaConfig(
         firmware_path=firmware_path,
         channel=parse_channel(args.channel),
-        bitrate=args.bitrate,
+        app_bitrate=args.app_bitrate,
+        ota_bitrate=ota_bitrate,
         node_id=args.node,
         request_target=args.request_target,
         frame_delay_ms=args.frame_delay_ms,
@@ -514,6 +697,7 @@ def parse_args(argv: list[str]) -> OtaConfig:
         cancel_first=not args.no_cancel_first,
         post_check=not args.no_post_check,
         allow_unconfigured=args.allow_unconfigured,
+        quiesce_reports=not args.no_quiesce_reports,
         verbose=args.verbose,
         dll_path=args.dll,
     )

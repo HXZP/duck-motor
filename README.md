@@ -129,6 +129,8 @@ bazelisk run //scripts:flash_full -- --image .\firmware_package\motor_duck_v1.0.
 bazelisk run //scripts:flash_full -- --flash-exe "C:\Program Files\SEGGER\JLink_V922\JLink.exe"
 ```
 
+`flash_full` 默认只擦除 `0x08000000~0x0800FBFF`，保留从 `0x0800FC00` 开始的用户存储区。脚本会同时检查擦除范围和 full bin 写入范围，防止误覆盖用户存储页。
+
 ## PCAN OTA
 
 先构建 release 固件：
@@ -140,20 +142,22 @@ bazelisk build //:firmware
 通过 PCAN-USB 执行 OTA，目标电机需要已经配置唯一业务 CAN ID。以下示例升级节点 `0x01`：
 
 ```powershell
-python .\scripts\pcan_ota.py --file .\bazel-bin\ota_app_release.bin --bitrate 500k --node 0x01 --frame-delay-ms 1
+python .\scripts\pcan_ota.py --file .\bazel-bin\ota_app_release.bin --node 0x01 --frame-delay-ms 1
 ```
 
 也可以通过 Bazel 运行：
 
 ```powershell
-bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrate 500k --node 0x01 --frame-delay-ms 1
+bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --node 0x01 --frame-delay-ms 1
 ```
 
 常用参数：
 
 ```text
 --channel auto          自动选择空闲 PCAN 通道
---bitrate 500k          CAN 波特率
+--app-bitrate 1m        App 通信波特率
+--ota-bitrate 1m        Boot OTA 数据传输波特率
+--bitrate 1m            兼容旧参数，等同于 --ota-bitrate
 --node 0x01             目标电机业务节点 ID
 --frame-delay-ms 1      OTA CAN 分片帧间隔，单位：毫秒
 --no-post-check         OTA 完成后不检查 App 是否恢复响应
@@ -162,6 +166,6 @@ bazelisk run //scripts:pcan_ota -- --file bazel-bin/ota_app_release.bin --bitrat
 --verbose               打印详细 CAN 帧日志
 ```
 
-脚本会自动发送 OTA 入口帧，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。当前测试在 `500k` 下使用 `--frame-delay-ms 1` 可以稳定完成 OTA。未配置电机不允许 OTA，需要先通过管理发现和 UID 配置唯一业务 CAN ID。默认 post-check 会在已配置节点上读取 App 版本号，确认 App 已恢复响应。
+脚本会先用 App 通信波特率发送 OTA 入口帧，进入 Boot 后使用 OTA 数据传输波特率，等待 Boot 返回 YMODEM `C`，然后传输 OTA app 镜像。默认 App 通信波特率和 Boot OTA 数据传输波特率均为 `1m`。未配置电机不允许 OTA，需要先通过管理发现和 UID 配置唯一业务 CAN ID。默认 post-check 会切回 App 通信波特率读取 App 版本号，确认 App 已恢复响应。
 
 OTA app 镜像会由脚本自动追加 `128` 字节业务头，业务头包含 App 长度和 CRC16-CCITT。Boot 会在首个数据包校验业务头，业务头通过后才擦除 App 区；写入完成后再次读取 App Flash 计算 CRC16，校验通过后才清除 OTA 标志并跳转 App。当前 Boot 启动跳 App 前只检查向量表合法性，不做每次启动整包 CRC16 校验。
