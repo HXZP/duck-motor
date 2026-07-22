@@ -2,12 +2,14 @@
 
 #include "app/app_light.h"
 #include "app/app_version.h"
+#include "app/as5600.h"
 #include "app/flash.h"
 #include "app/foc_app.h"
 #include "app/foc_config.h"
 #include "app/log.h"
 #include "common/chip_uid.h"
 
+#include <math.h>
 #include <string.h>
 
 #define CAN_PROTOCOL_RX_QUEUE_LENGTH                 8u
@@ -21,6 +23,13 @@
 #define CAN_PROTOCOL_RESET_CAN_CONFIG_CONFIRM_CODE   0xA5u
 #define CAN_PROTOCOL_RESET_DELAY_MS                  50u
 #define CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS      1000u
+#define CAN_PROTOCOL_PID_DEBUG_FRAME_PERIOD_MS       3u
+#define CAN_PROTOCOL_PID_DEBUG_FRAME_COUNT           4u
+#define CAN_PROTOCOL_FOC_TRACE_ACTION_START           0u
+#define CAN_PROTOCOL_FOC_TRACE_ACTION_STOP            1u
+#define CAN_PROTOCOL_FOC_TRACE_ACTION_UPLOAD          2u
+#define CAN_PROTOCOL_FOC_TRACE_PART_COUNT             3u
+#define CAN_PROTOCOL_FOC_TRACE_PART_DATA_LENGTH       6u
 
 /**
  * @brief CAN 接收帧缓存。
@@ -38,6 +47,12 @@ static uint32_t can_protocol_next_manage_report_tick_ms = 0u;
 static uint8_t can_protocol_report_enabled = USER_INFO_DEFAULT_REPORT_ENABLE;
 static uint32_t can_protocol_report_period_ms = USER_INFO_DEFAULT_REPORT_PERIOD_MS;
 static uint32_t can_protocol_next_motor_report_tick_ms = 0u;
+static uint32_t can_protocol_next_pid_debug_report_tick_ms = 0u;
+static uint8_t can_protocol_pid_debug_frame_index = 0u;
+static foc_speed_pid_runtime_t can_protocol_pid_debug_runtime;
+static uint8_t can_protocol_foc_trace_upload_active = 0u;
+static uint16_t can_protocol_foc_trace_upload_index = 0u;
+static uint8_t can_protocol_foc_trace_upload_part = 0u;
 static uint32_t can_protocol_next_unconfigured_log_tick_ms = 0u;
 static uint32_t can_protocol_tx_ok_count = 0u;
 static uint32_t can_protocol_tx_fail_count = 0u;
@@ -49,6 +64,9 @@ static can_protocol_rx_frame_t can_protocol_rx_queue[CAN_PROTOCOL_RX_QUEUE_LENGT
 static volatile uint8_t can_protocol_rx_write_index = 0u;
 static volatile uint8_t can_protocol_rx_read_index = 0u;
 static volatile uint8_t can_protocol_rx_overflow_flag = 0u;
+
+static void can_protocol_report_speed_pid_debug(void);
+static void can_protocol_upload_foc_trace(void);
 
 /**
  * @brief 判断节点 ID 是否允许作为业务节点 ID。
@@ -606,6 +624,7 @@ static uint8_t can_protocol_set_foc_config_param(uint8_t param_id, uint32_t raw_
  */
 static uint8_t can_protocol_get_foc_config_param(uint8_t param_id, uint32_t *raw_value)
 {
+    as5600_diagnostic_t as5600_diagnostic;
     user_info_foc_config_t config;
 
     if (raw_value == NULL)
@@ -617,6 +636,8 @@ static uint8_t can_protocol_get_foc_config_param(uint8_t param_id, uint32_t *raw
     {
         return CAN_PROTOCOL_STATUS_CAN_ERROR;
     }
+
+    as5600GetDiagnostic(&as5600_diagnostic);
 
     switch (param_id)
     {
@@ -647,6 +668,42 @@ static uint8_t can_protocol_get_foc_config_param(uint8_t param_id, uint32_t *raw
         case CAN_PROTOCOL_FOC_CONFIG_PHASE_MAP:
         {
             *raw_value = config.phase_map;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_BOOT_CONF:
+        {
+            *raw_value = as5600_diagnostic.boot_config;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_ACTIVE_CONF:
+        {
+            *raw_value = as5600_diagnostic.active_config;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_READ_LAST_US:
+        {
+            *raw_value = as5600_diagnostic.read_last_us;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_READ_MIN_US:
+        {
+            *raw_value = as5600_diagnostic.read_min_us;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_READ_MAX_US:
+        {
+            *raw_value = as5600_diagnostic.read_max_us;
+            break;
+        }
+
+        case CAN_PROTOCOL_FOC_CONFIG_AS5600_READ_AVERAGE_US:
+        {
+            *raw_value = as5600_diagnostic.read_average_us;
             break;
         }
 
@@ -750,10 +807,10 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
 /**
  * @brief 根据参数编号设置速度环参数。
  * @param param_id 参数编号。
- * @param raw_value 原始参数值。
+ * @param value 单精度浮点参数值。
  * @return uint8_t 协议状态码。
  */
-static uint8_t can_protocol_set_speed_pid_param(uint8_t param_id, int32_t raw_value)
+static uint8_t can_protocol_set_speed_pid_param(uint8_t param_id, float value)
 {
     float p = 0.0f;
     float i = 0.0f;
@@ -761,37 +818,52 @@ static uint8_t can_protocol_set_speed_pid_param(uint8_t param_id, int32_t raw_va
     float i_acc_max = 0.0f;
     float out_max = 0.0f;
 
+    if (!isfinite(value))
+    {
+        return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+    }
+
     foc_speed_pid_get_full_param(&p, &i, &d, &i_acc_max, &out_max);
 
     switch (param_id)
     {
         case CAN_PROTOCOL_PID_PARAM_P:
         {
-            p = (float)raw_value / 1000.0f;
+            p = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I:
         {
-            i = (float)raw_value / 1000.0f;
+            i = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_D:
         {
-            d = (float)raw_value / 1000.0f;
+            d = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I_ACC_MAX:
         {
-            i_acc_max = (float)raw_value;
+            if ((value < 0.0f) || (value > (float)OUT_MAX))
+            {
+                return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+            }
+
+            i_acc_max = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_OUT_MAX:
         {
-            out_max = (float)raw_value;
+            if ((value < 0.0f) || (value > (float)OUT_MAX))
+            {
+                return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+            }
+
+            out_max = value;
             break;
         }
 
@@ -808,10 +880,10 @@ static uint8_t can_protocol_set_speed_pid_param(uint8_t param_id, int32_t raw_va
 /**
  * @brief 根据参数编号读取速度环参数。
  * @param param_id 参数编号。
- * @param raw_value 参数值输出指针。
+ * @param value 参数值输出指针。
  * @return uint8_t 协议状态码。
  */
-static uint8_t can_protocol_get_speed_pid_param(uint8_t param_id, int32_t *raw_value)
+static uint8_t can_protocol_get_speed_pid_param(uint8_t param_id, float *value)
 {
     float p = 0.0f;
     float i = 0.0f;
@@ -825,31 +897,31 @@ static uint8_t can_protocol_get_speed_pid_param(uint8_t param_id, int32_t *raw_v
     {
         case CAN_PROTOCOL_PID_PARAM_P:
         {
-            *raw_value = (int32_t)(p * 1000.0f);
+            *value = p;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I:
         {
-            *raw_value = (int32_t)(i * 1000.0f);
+            *value = i;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_D:
         {
-            *raw_value = (int32_t)(d * 1000.0f);
+            *value = d;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I_ACC_MAX:
         {
-            *raw_value = (int32_t)i_acc_max;
+            *value = i_acc_max;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_OUT_MAX:
         {
-            *raw_value = (int32_t)out_max;
+            *value = out_max;
             break;
         }
 
@@ -865,10 +937,10 @@ static uint8_t can_protocol_get_speed_pid_param(uint8_t param_id, int32_t *raw_v
 /**
  * @brief 根据参数编号设置位置环参数。
  * @param param_id 参数编号。
- * @param raw_value 原始参数值。
+ * @param value 单精度浮点参数值。
  * @return uint8_t 协议状态码。
  */
-static uint8_t can_protocol_set_position_pid_param(uint8_t param_id, int32_t raw_value)
+static uint8_t can_protocol_set_position_pid_param(uint8_t param_id, float value)
 {
     float p = 0.0f;
     float i = 0.0f;
@@ -876,37 +948,52 @@ static uint8_t can_protocol_set_position_pid_param(uint8_t param_id, int32_t raw
     float i_acc_max = 0.0f;
     float out_max = 0.0f;
 
+    if (!isfinite(value))
+    {
+        return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+    }
+
     foc_position_pid_get_param(&p, &i, &d, &i_acc_max, &out_max);
 
     switch (param_id)
     {
         case CAN_PROTOCOL_PID_PARAM_P:
         {
-            p = (float)raw_value / 1000.0f;
+            p = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I:
         {
-            i = (float)raw_value / 1000.0f;
+            i = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_D:
         {
-            d = (float)raw_value / 1000.0f;
+            d = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I_ACC_MAX:
         {
-            i_acc_max = (float)raw_value;
+            if ((value < 0.0f) || (value > (float)OUT_MAX))
+            {
+                return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+            }
+
+            i_acc_max = value;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_OUT_MAX:
         {
-            out_max = (float)raw_value;
+            if ((value < 0.0f) || (value > (float)OUT_MAX))
+            {
+                return CAN_PROTOCOL_STATUS_INVALID_PARAM;
+            }
+
+            out_max = value;
             break;
         }
 
@@ -923,10 +1010,10 @@ static uint8_t can_protocol_set_position_pid_param(uint8_t param_id, int32_t raw
 /**
  * @brief 根据参数编号读取位置环参数。
  * @param param_id 参数编号。
- * @param raw_value 参数值输出指针。
+ * @param value 参数值输出指针。
  * @return uint8_t 协议状态码。
  */
-static uint8_t can_protocol_get_position_pid_param(uint8_t param_id, int32_t *raw_value)
+static uint8_t can_protocol_get_position_pid_param(uint8_t param_id, float *value)
 {
     float p = 0.0f;
     float i = 0.0f;
@@ -940,31 +1027,31 @@ static uint8_t can_protocol_get_position_pid_param(uint8_t param_id, int32_t *ra
     {
         case CAN_PROTOCOL_PID_PARAM_P:
         {
-            *raw_value = (int32_t)(p * 1000.0f);
+            *value = p;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I:
         {
-            *raw_value = (int32_t)(i * 1000.0f);
+            *value = i;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_D:
         {
-            *raw_value = (int32_t)(d * 1000.0f);
+            *value = d;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_I_ACC_MAX:
         {
-            *raw_value = (int32_t)i_acc_max;
+            *value = i_acc_max;
             break;
         }
 
         case CAN_PROTOCOL_PID_PARAM_OUT_MAX:
         {
-            *raw_value = (int32_t)out_max;
+            *value = out_max;
             break;
         }
 
@@ -1344,6 +1431,8 @@ void can_protocol_report_motor_state(void)
         return;
     }
 
+    can_protocol_report_speed_pid_debug();
+
     now_ms = HAL_GetTick();
     if ((int32_t)(now_ms - can_protocol_next_motor_report_tick_ms) < 0)
     {
@@ -1355,6 +1444,101 @@ void can_protocol_report_motor_state(void)
     can_protocol_encode_int32(&report_data[0], foc_get_angle(&foc));
     can_protocol_encode_int32(&report_data[4], foc_get_speed_estimate());
     can_protocol_send_frame(can_protocol_get_report_std_id(), report_data, CAN_PROTOCOL_FULL_DLC);
+}
+
+/**
+ * @brief 将单精度浮点数按 IEEE 754 小端格式写入缓冲区。
+ * @param data 目标缓冲区指针。
+ * @param value 待写入的单精度浮点数。
+ * @return void
+ */
+static void can_protocol_encode_float32(uint8_t *data, float value)
+{
+    uint32_t raw_value = 0u;
+
+    memcpy(&raw_value, &value, sizeof(raw_value));
+    can_protocol_encode_uint32(data, raw_value);
+}
+
+/**
+ * @brief 从 IEEE 754 小端缓冲区读取单精度浮点数。
+ * @param data 源缓冲区指针。
+ * @return float 解析后的单精度浮点数。
+ */
+static float can_protocol_decode_float32(const uint8_t *data)
+{
+    uint32_t raw_value;
+    float value = 0.0f;
+
+    raw_value = can_protocol_decode_uint32(data);
+    memcpy(&value, &raw_value, sizeof(value));
+    return value;
+}
+
+/**
+ * @brief 周期上报速度环 PID 运行时诊断数据。
+ * @return void
+ * @note 诊断帧默认随主动上报启用，固定周期为 10ms。
+ */
+static void can_protocol_report_speed_pid_debug(void)
+{
+    uint8_t report_data[8] = {0};
+    uint32_t now_ms;
+
+    now_ms = HAL_GetTick();
+    if ((int32_t)(now_ms - can_protocol_next_pid_debug_report_tick_ms) < 0)
+    {
+        return;
+    }
+
+    can_protocol_next_pid_debug_report_tick_ms = now_ms
+                                                 + CAN_PROTOCOL_PID_DEBUG_FRAME_PERIOD_MS;
+
+    if (can_protocol_pid_debug_frame_index == 0u)
+    {
+        foc_speed_pid_get_runtime(&can_protocol_pid_debug_runtime);
+        can_protocol_encode_float32(&report_data[0], can_protocol_pid_debug_runtime.target);
+        can_protocol_encode_float32(&report_data[4], can_protocol_pid_debug_runtime.feedback);
+        can_protocol_send_frame(CAN_PROTOCOL_PID_DEBUG_STATE_BASE_ID + can_protocol_node_id,
+                                report_data,
+                                CAN_PROTOCOL_FULL_DLC);
+    }
+    else
+    {
+        if (can_protocol_pid_debug_frame_index == 1u)
+        {
+            can_protocol_encode_float32(&report_data[0], can_protocol_pid_debug_runtime.error);
+            can_protocol_encode_float32(&report_data[4], can_protocol_pid_debug_runtime.error_delta);
+            can_protocol_send_frame(CAN_PROTOCOL_PID_DEBUG_ERROR_BASE_ID + can_protocol_node_id,
+                                    report_data,
+                                    CAN_PROTOCOL_FULL_DLC);
+        }
+        else
+        {
+            if (can_protocol_pid_debug_frame_index == 2u)
+            {
+                can_protocol_encode_float32(&report_data[0], can_protocol_pid_debug_runtime.integral_acc);
+                can_protocol_encode_float32(&report_data[4], can_protocol_pid_debug_runtime.integral_output);
+                can_protocol_send_frame(CAN_PROTOCOL_PID_DEBUG_INTEGRAL_BASE_ID + can_protocol_node_id,
+                                        report_data,
+                                        CAN_PROTOCOL_FULL_DLC);
+            }
+            else
+            {
+                can_protocol_encode_float32(&report_data[0], can_protocol_pid_debug_runtime.output);
+                can_protocol_encode_int32(&report_data[4], can_protocol_pid_debug_runtime.q_target);
+                can_protocol_send_frame(CAN_PROTOCOL_PID_DEBUG_OUTPUT_BASE_ID + can_protocol_node_id,
+                                        report_data,
+                                        CAN_PROTOCOL_FULL_DLC);
+            }
+        }
+    }
+
+    can_protocol_pid_debug_frame_index++;
+    if (can_protocol_pid_debug_frame_index >= CAN_PROTOCOL_PID_DEBUG_FRAME_COUNT)
+    {
+        can_protocol_pid_debug_frame_index = 0u;
+    }
 }
 
 /**
@@ -1374,6 +1558,8 @@ void can_protocol_process(void)
     {
         can_protocol_rx_overflow_flag = 0u;
     }
+
+    can_protocol_upload_foc_trace();
 }
 
 /**
@@ -1392,6 +1578,11 @@ int can_protocol_has_pending(void)
         return 1;
     }
 
+    if (can_protocol_foc_trace_upload_active != 0u)
+    {
+        return 1;
+    }
+
     return 0;
 }
 
@@ -1405,6 +1596,7 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
 {
     uint8_t ack_payload[6] = {0};
     int32_t value = 0;
+    float pid_value = 0.0f;
     uint8_t status = CAN_PROTOCOL_STATUS_OK;
 
     if (rx_data == NULL)
@@ -1462,10 +1654,14 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
 
             if (rx_data[1] == 0u)
             {
+                foc_current_set_target(0);
+                foc_set_target(0, 0, 0);
                 foc_set_state(&foc, Foc_Shutdown);
+                foc_output_enable(0U);
             }
             else
             {
+                foc_output_enable(1U);
                 foc_set_state(&foc, Foc_Working);
             }
 
@@ -1546,10 +1742,10 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
                 break;
             }
 
-            value = can_protocol_decode_int32(&rx_data[2]);
-            status = can_protocol_set_speed_pid_param(rx_data[1], value);
+            pid_value = can_protocol_decode_float32(&rx_data[2]);
+            status = can_protocol_set_speed_pid_param(rx_data[1], pid_value);
             ack_payload[0] = rx_data[1];
-            can_protocol_encode_int32(&ack_payload[1], value);
+            can_protocol_encode_float32(&ack_payload[1], pid_value);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
             return;
         }
@@ -1562,9 +1758,9 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
                 break;
             }
 
-            status = can_protocol_get_speed_pid_param(rx_data[1], &value);
+            status = can_protocol_get_speed_pid_param(rx_data[1], &pid_value);
             ack_payload[0] = rx_data[1];
-            can_protocol_encode_int32(&ack_payload[1], value);
+            can_protocol_encode_float32(&ack_payload[1], pid_value);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
             return;
         }
@@ -1577,10 +1773,10 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
                 break;
             }
 
-            value = can_protocol_decode_int32(&rx_data[2]);
-            status = can_protocol_set_position_pid_param(rx_data[1], value);
+            pid_value = can_protocol_decode_float32(&rx_data[2]);
+            status = can_protocol_set_position_pid_param(rx_data[1], pid_value);
             ack_payload[0] = rx_data[1];
-            can_protocol_encode_int32(&ack_payload[1], value);
+            can_protocol_encode_float32(&ack_payload[1], pid_value);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
             return;
         }
@@ -1593,9 +1789,9 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
                 break;
             }
 
-            status = can_protocol_get_position_pid_param(rx_data[1], &value);
+            status = can_protocol_get_position_pid_param(rx_data[1], &pid_value);
             ack_payload[0] = rx_data[1];
-            can_protocol_encode_int32(&ack_payload[1], value);
+            can_protocol_encode_float32(&ack_payload[1], pid_value);
             can_protocol_send_ack(rx_data[0], status, ack_payload, 5u);
             return;
         }
@@ -1783,6 +1979,60 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
             return;
         }
 
+        case CAN_PROTOCOL_CMD_FOC_TRACE:
+        {
+            uint8_t action;
+
+            if (rxframe.DLC < 2u)
+            {
+                status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                break;
+            }
+
+            action = rx_data[1];
+            if (action == CAN_PROTOCOL_FOC_TRACE_ACTION_START)
+            {
+                can_protocol_foc_trace_upload_active = 0u;
+                foc_trace_start();
+            }
+            else
+            {
+                if (action == CAN_PROTOCOL_FOC_TRACE_ACTION_STOP)
+                {
+                    foc_trace_stop();
+                }
+                else
+                {
+                    if (action == CAN_PROTOCOL_FOC_TRACE_ACTION_UPLOAD)
+                    {
+                        foc_trace_stop();
+
+                        if (foc_trace_get_count() == 0u)
+                        {
+                            status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                        }
+                        else
+                        {
+                            can_protocol_foc_trace_upload_index = 0u;
+                            can_protocol_foc_trace_upload_part = 0u;
+                            can_protocol_foc_trace_upload_active = 1u;
+                        }
+                    }
+                    else
+                    {
+                        status = CAN_PROTOCOL_STATUS_INVALID_PARAM;
+                    }
+                }
+            }
+
+            ack_payload[0] = action;
+            ack_payload[1] = foc_trace_get_state();
+            can_protocol_encode_uint16(&ack_payload[2], foc_trace_get_count());
+            can_protocol_encode_uint16(&ack_payload[4], foc_trace_get_sample_hz());
+            can_protocol_send_ack(rx_data[0], status, ack_payload, 6u);
+            return;
+        }
+
         default:
         {
             status = CAN_PROTOCOL_STATUS_INVALID_CMD;
@@ -1791,6 +2041,70 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
     }
 
     can_protocol_send_ack(rx_data[0], status, NULL, 0u);
+}
+
+/**
+ * @brief 在主循环中分帧上传已冻结的 FOC 高速记录。
+ * @return void
+ */
+static void can_protocol_upload_foc_trace(void)
+{
+    uint8_t report_data[8] = {0};
+    uint16_t std_id;
+    const uint8_t *sample_bytes;
+    foc_trace_sample_t sample;
+
+    if (can_protocol_foc_trace_upload_active == 0u)
+    {
+        return;
+    }
+
+    if (can_protocol_foc_trace_upload_index >= foc_trace_get_count())
+    {
+        can_protocol_foc_trace_upload_active = 0u;
+        return;
+    }
+
+    if (foc_trace_get_sample(can_protocol_foc_trace_upload_index, &sample) == 0u)
+    {
+        can_protocol_foc_trace_upload_active = 0u;
+        return;
+    }
+
+    sample_bytes = (const uint8_t *)&sample;
+    can_protocol_encode_uint16(&report_data[0], can_protocol_foc_trace_upload_index);
+    memcpy(&report_data[2],
+           &sample_bytes[can_protocol_foc_trace_upload_part
+                         * CAN_PROTOCOL_FOC_TRACE_PART_DATA_LENGTH],
+           CAN_PROTOCOL_FOC_TRACE_PART_DATA_LENGTH);
+
+    if (can_protocol_foc_trace_upload_part == 0u)
+    {
+        std_id = CAN_PROTOCOL_FOC_TRACE_PART0_BASE_ID + can_protocol_node_id;
+    }
+    else
+    {
+        if (can_protocol_foc_trace_upload_part == 1u)
+        {
+            std_id = CAN_PROTOCOL_FOC_TRACE_PART1_BASE_ID + can_protocol_node_id;
+        }
+        else
+        {
+            std_id = CAN_PROTOCOL_FOC_TRACE_PART2_BASE_ID + can_protocol_node_id;
+        }
+    }
+
+    if (can_protocol_send_frame(std_id, report_data, CAN_PROTOCOL_FULL_DLC) != HAL_OK)
+    {
+        return;
+    }
+
+    can_protocol_foc_trace_upload_part++;
+    if (can_protocol_foc_trace_upload_part >= CAN_PROTOCOL_FOC_TRACE_PART_COUNT)
+    {
+        can_protocol_foc_trace_upload_part = 0u;
+        can_protocol_foc_trace_upload_index++;
+    }
 }
 
 /**

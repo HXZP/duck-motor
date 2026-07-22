@@ -16,6 +16,38 @@ typedef enum
 } foc_ctrl_mode_t;
 
 /**
+ * @brief 速度环 PID 运行时诊断数据。
+ */
+typedef struct
+{
+    float target;          /**< 目标速度，单位：mrad/s。 */
+    float feedback;        /**< 反馈速度，单位：mrad/s。 */
+    float error;           /**< 当前速度误差，单位：mrad/s。 */
+    float error_delta;     /**< 相邻控制周期误差变化量，单位：mrad/s。 */
+    float integral_acc;    /**< 积分累计值。 */
+    float integral_output; /**< 积分输出值。 */
+    float output;          /**< PID 最终输出值。 */
+    int32_t q_target;      /**< 实际 q 轴目标值。 */
+} foc_speed_pid_runtime_t;
+
+/**
+ * @brief FOC 高速跟踪采样数据。
+ */
+typedef struct __attribute__((packed))
+{
+    uint16_t timestamp_ms;    /**< 系统毫秒时间戳低 16 位。 */
+    uint16_t sensor_angle;    /**< 传感器原始角度，单位：mrad。 */
+    uint16_t mechanical_angle;/**< 机械角度，单位：mrad。 */
+    uint16_t electrical_angle;/**< 归一化电角度，单位：mrad。 */
+    int32_t speed;             /**< 估算机械速度，单位：mrad/s。 */
+    int16_t q_target;          /**< q 轴目标值。 */
+    uint8_t pwm_a;             /**< A 相 PWM 占空比，0~255 对应 0~100%。 */
+    uint8_t pwm_b;             /**< B 相 PWM 占空比，0~255 对应 0~100%。 */
+    uint8_t pwm_c;             /**< C 相 PWM 占空比，0~255 对应 0~100%。 */
+    uint8_t reserved;          /**< 保留字段。 */
+} foc_trace_sample_t;
+
+/**
  * @brief 初始化 FOC 控制运行环境。
  * @return void
  */
@@ -144,6 +176,51 @@ void foc_speed_pid_get_target(float *target);
  * @return int32_t 当前速度估算值，单位为 mrad/s。
  */
 int32_t foc_get_speed_estimate(void);
+
+/**
+ * @brief 获取速度环 PID 运行时诊断数据。
+ * @param runtime 运行时诊断数据输出指针。
+ * @return void
+ */
+void foc_speed_pid_get_runtime(foc_speed_pid_runtime_t *runtime);
+
+/**
+ * @brief 启动 FOC 高速环形记录。
+ * @return void
+ */
+void foc_trace_start(void);
+
+/**
+ * @brief 停止并冻结 FOC 高速记录。
+ * @return void
+ */
+void foc_trace_stop(void);
+
+/**
+ * @brief 获取 FOC 高速记录状态。
+ * @return uint8_t 状态值，0 表示空闲，1 表示记录，2 表示触发后记录，3 表示已冻结。
+ */
+uint8_t foc_trace_get_state(void);
+
+/**
+ * @brief 获取已保存的 FOC 高速采样数量。
+ * @return uint16_t 采样数量。
+ */
+uint16_t foc_trace_get_count(void);
+
+/**
+ * @brief 获取 FOC 高速记录采样频率。
+ * @return uint16_t 采样频率，单位：Hz。
+ */
+uint16_t foc_trace_get_sample_hz(void);
+
+/**
+ * @brief 按时间顺序读取一条 FOC 高速采样。
+ * @param index 按时间排序后的采样下标。
+ * @param sample 采样数据输出指针。
+ * @return uint8_t 成功返回 1，参数无效返回 0。
+ */
+uint8_t foc_trace_get_sample(uint16_t index, foc_trace_sample_t *sample);
 
 /**
  * @brief 设置位置环 PID 参数。

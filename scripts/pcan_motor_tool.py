@@ -8,15 +8,17 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import ctypes
 import math
 import queue
+import struct
 import threading
 import time
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 from tkinter import ttk
 
 
@@ -38,6 +40,11 @@ PCAN_MESSAGE_STANDARD = 0x00
 MOTOR_HOST_CMD_BASE = 0x100
 MOTOR_ACK_BASE = 0x180
 MOTOR_REPORT_BASE = 0x200
+MOTOR_PID_DEBUG_STATE_BASE = 0x300
+MOTOR_PID_DEBUG_ERROR_BASE = 0x320
+MOTOR_PID_DEBUG_INTEGRAL_BASE = 0x340
+MOTOR_PID_DEBUG_OUTPUT_BASE = 0x360
+MOTOR_FOC_TRACE_PART_BASES = (0x380, 0x3A0, 0x3C0)
 MOTOR_MANAGE_NODE_ID = 0x7E
 MOTOR_MANAGE_COMMAND_ID = 0x17E
 MOTOR_MANAGE_ACK_ID = 0x1FE
@@ -47,6 +54,10 @@ MOTOR_CMD_SET_RUN_MODE = 0x01
 MOTOR_CMD_SET_CURRENT_TARGET = 0x02
 MOTOR_CMD_SET_SPEED_TARGET = 0x03
 MOTOR_CMD_SET_POSITION_TARGET = 0x04
+MOTOR_CMD_SET_SPEED_PID_PARAM = 0x10
+MOTOR_CMD_READ_SPEED_PID_PARAM = 0x11
+MOTOR_CMD_SET_POSITION_PID_PARAM = 0x12
+MOTOR_CMD_READ_POSITION_PID_PARAM = 0x13
 MOTOR_CMD_READ_NODE_ID = 0x21
 MOTOR_CMD_READ_APP_VERSION = 0x22
 MOTOR_CMD_SET_REPORT_CONFIG = 0x23
@@ -55,6 +66,7 @@ MOTOR_CMD_SET_FOC_CONFIG = 0x26
 MOTOR_CMD_READ_FOC_CONFIG = 0x27
 MOTOR_CMD_ZERO_CALIBRATION = 0x30
 MOTOR_CMD_READ_ZERO = 0x31
+MOTOR_CMD_FOC_TRACE = 0x41
 MOTOR_CMD_MANAGE_REPORT = 0x60
 MOTOR_CMD_MANAGE_IDENTIFY = 0x61
 MOTOR_CMD_MANAGE_SET_CAN_ID = 0x62
@@ -64,6 +76,26 @@ MOTOR_FOC_PARAM_MASTER_VOLTAGE_MV = 0x01
 MOTOR_FOC_PARAM_CONTROL_HZ = 0x02
 MOTOR_FOC_PARAM_SENSOR_HZ = 0x03
 MOTOR_FOC_PARAM_PHASE_MAP = 0x04
+MOTOR_FOC_PARAM_AS5600_BOOT_CONF = 0x05
+MOTOR_FOC_PARAM_AS5600_ACTIVE_CONF = 0x06
+MOTOR_FOC_PARAM_AS5600_READ_LAST_US = 0x07
+MOTOR_FOC_PARAM_AS5600_READ_MIN_US = 0x08
+MOTOR_FOC_PARAM_AS5600_READ_MAX_US = 0x09
+MOTOR_FOC_PARAM_AS5600_READ_AVERAGE_US = 0x0A
+
+MOTOR_PID_PARAM_P = 0x00
+MOTOR_PID_PARAM_I = 0x01
+MOTOR_PID_PARAM_D = 0x02
+MOTOR_PID_PARAM_I_ACC_MAX = 0x03
+MOTOR_PID_PARAM_OUT_MAX = 0x04
+
+MOTOR_PID_PARAMETERS = (
+    ("P", MOTOR_PID_PARAM_P),
+    ("I", MOTOR_PID_PARAM_I),
+    ("D", MOTOR_PID_PARAM_D),
+    ("I_ACC_MAX", MOTOR_PID_PARAM_I_ACC_MAX),
+    ("OUT_MAX", MOTOR_PID_PARAM_OUT_MAX),
+)
 
 MOTOR_STATUS_TEXT = {
     0x00: "OK",
@@ -78,6 +110,10 @@ MOTOR_COMMAND_TEXT = {
     MOTOR_CMD_SET_CURRENT_TARGET: "set_current",
     MOTOR_CMD_SET_SPEED_TARGET: "set_speed",
     MOTOR_CMD_SET_POSITION_TARGET: "set_position",
+    MOTOR_CMD_SET_SPEED_PID_PARAM: "set_speed_pid",
+    MOTOR_CMD_READ_SPEED_PID_PARAM: "read_speed_pid",
+    MOTOR_CMD_SET_POSITION_PID_PARAM: "set_position_pid",
+    MOTOR_CMD_READ_POSITION_PID_PARAM: "read_position_pid",
     MOTOR_CMD_READ_NODE_ID: "read_node",
     MOTOR_CMD_READ_APP_VERSION: "read_version",
     MOTOR_CMD_SET_REPORT_CONFIG: "set_report",
@@ -86,6 +122,7 @@ MOTOR_COMMAND_TEXT = {
     MOTOR_CMD_READ_FOC_CONFIG: "read_foc",
     MOTOR_CMD_ZERO_CALIBRATION: "zero_calibration",
     MOTOR_CMD_READ_ZERO: "read_zero",
+    MOTOR_CMD_FOC_TRACE: "foc_trace",
     MOTOR_CMD_MANAGE_REPORT: "manage_report",
     MOTOR_CMD_MANAGE_IDENTIFY: "manage_identify",
     MOTOR_CMD_MANAGE_SET_CAN_ID: "manage_set_id",
@@ -190,6 +227,29 @@ class MotorReportEvent:
 
 
 @dataclass
+class PidDebugEvent:
+    """@brief 速度环 PID 诊断帧事件。"""
+
+    node_id: int
+    frame_type: str
+    can_id: int
+    value_a: float
+    value_b: float | int
+    raw_data: bytes
+    timestamp_ms: int
+
+
+@dataclass
+class FocTracePartEvent:
+    """@brief FOC 高速记录分片事件。"""
+
+    node_id: int
+    sample_index: int
+    part_index: int
+    payload: bytes
+
+
+@dataclass
 class MotorAckEvent:
     """@brief 电机应答事件。"""
 
@@ -251,6 +311,24 @@ def int32_to_le(value: int) -> bytes:
     @return bytes 小端 int32 字节。
     """
     return int(value).to_bytes(4, byteorder="little", signed=True)
+
+
+def float32_from_le(data: bytes) -> float:
+    """
+    @brief 从 IEEE 754 小端字节解析 float32。
+    @param data 输入字节。
+    @return float 解析出的单精度浮点数。
+    """
+    return struct.unpack("<f", data)[0]
+
+
+def float32_to_le(value: float) -> bytes:
+    """
+    @brief 将浮点数编码为 IEEE 754 小端 float32。
+    @param value 输入浮点数。
+    @return bytes 小端 float32 字节。
+    """
+    return struct.pack("<f", value)
 
 
 def uint16_to_le(value: int) -> bytes:
@@ -766,6 +844,36 @@ class PcanClient:
         payload += bytes([0, 0, 0])
         self.send_motor_command(node_id, payload)
 
+    def send_pid_param(self,
+                       node_id: int,
+                       command: int,
+                       param_id: int,
+                       value: float) -> None:
+        """
+        @brief 发送位置环或速度环参数写入命令。
+        @param node_id 目标节点 ID。
+        @param command PID 参数写入命令码。
+        @param param_id PID 参数编号。
+        @param value PID 单精度浮点参数值。
+        @return None
+        """
+        payload = bytes([command, param_id & 0xFF])
+        payload += float32_to_le(value)
+        payload += bytes([0, 0])
+        self.send_motor_command(node_id, payload)
+
+    def send_read_pid_param(self, node_id: int, command: int, param_id: int) -> None:
+        """
+        @brief 发送位置环或速度环参数读取命令。
+        @param node_id 目标节点 ID。
+        @param command PID 参数读取命令码。
+        @param param_id PID 参数编号。
+        @return None
+        """
+        payload = bytes([command, param_id & 0xFF])
+        payload += bytes([0, 0, 0, 0, 0, 0])
+        self.send_motor_command(node_id, payload)
+
     def send_report_config(self, node_id: int, enable: bool, period_ms: int) -> None:
         """
         @brief 发送主动上报配置命令。
@@ -816,13 +924,23 @@ class PcanClient:
         payload = bytes([command, 0, 0, 0, 0, 0, 0, 0])
         self.send_motor_command(node_id, payload)
 
+    def send_foc_trace_command(self, node_id: int, action: int) -> None:
+        """
+        @brief 发送 FOC 高速记录控制命令。
+        @param node_id 目标节点 ID。
+        @param action 操作编号，0 表示开始，1 表示停止，2 表示上传。
+        @return None
+        """
+        payload = bytes([MOTOR_CMD_FOC_TRACE, action & 0xFF])
+        payload += bytes([0, 0, 0, 0, 0, 0])
+        self.send_motor_command(node_id, payload)
+
     def send_stop_output(self, node_id: int) -> None:
         """
         @brief 停止指定电机输出。
         @param node_id 目标节点 ID。
         @return None
         """
-        self.send_current_target(node_id, 0)
         self.send_run_mode(node_id, False, MOTOR_MODES["current"])
 
     def _read_worker(self) -> None:
@@ -892,6 +1010,45 @@ class PcanClient:
 
             return
 
+        debug_ranges = (
+            (MOTOR_PID_DEBUG_STATE_BASE, "state"),
+            (MOTOR_PID_DEBUG_ERROR_BASE, "error"),
+            (MOTOR_PID_DEBUG_INTEGRAL_BASE, "integral"),
+            (MOTOR_PID_DEBUG_OUTPUT_BASE, "output"),
+        )
+
+        for base_id, frame_type in debug_ranges:
+            if message.ID in range(base_id + 1, base_id + 0x20):
+                if len(data) >= 8:
+                    value_a = float32_from_le(data[0:4])
+
+                    if frame_type == "output":
+                        value_b = int32_from_le(data[4:8])
+                    else:
+                        value_b = float32_from_le(data[4:8])
+
+                    event = PidDebugEvent(node_id=message.ID - base_id,
+                                          frame_type=frame_type,
+                                          can_id=message.ID,
+                                          value_a=value_a,
+                                          value_b=value_b,
+                                          raw_data=data,
+                                          timestamp_ms=now_monotonic_ms())
+                    self.event_queue.put(event)
+
+                return
+
+        for part_index, base_id in enumerate(MOTOR_FOC_TRACE_PART_BASES):
+            if message.ID in range(base_id + 1, base_id + 0x20):
+                if len(data) >= 8:
+                    event = FocTracePartEvent(node_id=message.ID - base_id,
+                                              sample_index=uint16_from_le(data[0:2]),
+                                              part_index=part_index,
+                                              payload=data[2:8])
+                    self.event_queue.put(event)
+
+                return
+
         if message.ID in range(MOTOR_ACK_BASE + 1, MOTOR_ACK_BASE + 0x80):
             if len(data) >= 2:
                 event = MotorAckEvent(node_id=message.ID - MOTOR_ACK_BASE,
@@ -949,6 +1106,18 @@ class MotorToolApp:
         self.new_phase_map_var = tk.StringVar(value="0")
         self.new_zero_after_config_var = tk.BooleanVar(value=True)
         self.new_report_off_var = tk.BooleanVar(value=True)
+        self.pid_window: tk.Toplevel | None = None
+        self.speed_pid_vars: dict[int, tk.StringVar] = {}
+        self.position_pid_vars: dict[int, tk.StringVar] = {}
+        self.recording = False
+        self.record_pending_save = False
+        self.record_node_id = 0x01
+        self.record_start_ms = 0
+        self.record_rows: list[dict[str, object]] = []
+        self.trace_parts: dict[int, dict[int, bytes]] = {}
+        self.trace_expected_count = 0
+        self.trace_sample_hz = 0
+        self.record_status_var = tk.StringVar(value="未记录")
         self.connected = False
         self.manage_reports: dict[int, ManageReportEvent] = {}
         self.manage_listen_active = False
@@ -1174,6 +1343,342 @@ class MotorToolApp:
                                                     column=10,
                                                     padx=(0, 8),
                                                     pady=(8, 0))
+        ttk.Button(control_frame,
+                   text="位置/速度环配置",
+                   command=self._open_pid_config_window).grid(row=1,
+                                                             column=11,
+                                                             padx=(0, 8),
+                                                             pady=(8, 0))
+        self.record_button = ttk.Button(control_frame,
+                                        text="开始记录",
+                                        command=self._toggle_recording)
+        self.record_button.grid(row=0, column=11, padx=(0, 8))
+        ttk.Label(control_frame,
+                  textvariable=self.record_status_var).grid(row=0,
+                                                            column=12,
+                                                            padx=(0, 8),
+                                                            sticky="w")
+
+    def _toggle_recording(self) -> None:
+        """
+        @brief 切换速度环诊断记录状态。
+        @return None
+        """
+        if self.recording:
+            self._stop_recording_and_save()
+        else:
+            if self.record_pending_save:
+                self._stop_recording_and_save()
+            else:
+                self._start_recording()
+
+    def _start_recording(self) -> None:
+        """
+        @brief 启动当前选中电机的 FOC 高速环形记录。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        try:
+            self.record_node_id = self._selected_node_id()
+            self.client.send_foc_trace_command(self.record_node_id, 0)
+            self._record_tx(self.record_node_id)
+        except Exception as exc:
+            messagebox.showerror("开始记录失败", str(exc))
+            return
+
+        self.record_start_ms = now_monotonic_ms()
+        self.record_rows = []
+        self.trace_parts = {}
+        self.trace_expected_count = 0
+        self.trace_sample_hz = 0
+        self.recording = True
+        self.record_pending_save = False
+        self.record_button.configure(text="停止并保存")
+        self.record_status_var.set(f"高速记录 0x{self.record_node_id:02X}")
+        self._append_log(f"开始 FOC 高速记录 node=0x{self.record_node_id:02X}")
+
+    def _stop_recording_and_save(self) -> None:
+        """
+        @brief 停止 FOC 高速记录并请求上传数据。
+        @return None
+        """
+        if self.record_pending_save:
+            self._show_trace_save_dialog()
+            return
+
+        self.recording = False
+        self.record_button.configure(state="disabled")
+        self.record_status_var.set("正在冻结并读取...")
+
+        try:
+            self.client.send_foc_trace_command(self.record_node_id, 1)
+            self._record_tx(self.record_node_id)
+        except Exception as exc:
+            self.record_button.configure(text="开始记录", state="normal")
+            messagebox.showerror("停止记录失败", str(exc))
+
+    def _show_trace_save_dialog(self) -> None:
+        """
+        @brief 显示 FOC 高速记录保存对话框。
+        @return None
+        """
+        if len(self.record_rows) == 0:
+            self.record_status_var.set("未读取到高速数据")
+            self.record_button.configure(text="开始记录", state="normal")
+            messagebox.showwarning("无记录", "没有收到 FOC 高速记录数据")
+            return
+
+        default_name = time.strftime(
+            f"motor_{self.record_node_id:02X}_foc_trace_%Y%m%d_%H%M%S.csv"
+        )
+        file_path = filedialog.asksaveasfilename(
+            title="保存 FOC 高速记录",
+            defaultextension=".csv",
+            initialfile=default_name,
+            filetypes=(("CSV 文件", "*.csv"), ("所有文件", "*.*")),
+        )
+
+        if file_path == "":
+            self.record_pending_save = True
+            self.record_button.configure(text="保存记录")
+            self.record_status_var.set(f"待保存: {len(self.record_rows)} 帧")
+            return
+
+        self._save_record_csv(file_path)
+
+    def _save_record_csv(self, file_path: str) -> None:
+        """
+        @brief 将当前诊断记录写入 CSV 文件。
+        @param file_path CSV 文件路径。
+        @return None
+        """
+        field_names = (
+            "sample_index",
+            "trigger_relative_us",
+            "sensor_angle_mrad",
+            "mechanical_angle_mrad",
+            "electrical_angle_mrad",
+            "speed_mrad_s",
+            "q_target",
+            "pwm_a",
+            "pwm_b",
+            "pwm_c",
+        )
+
+        try:
+            with open(file_path, "w", newline="", encoding="utf-8-sig") as csv_file:
+                writer = csv.DictWriter(csv_file, fieldnames=field_names)
+                writer.writeheader()
+                writer.writerows(self.record_rows)
+        except OSError as exc:
+            self.record_pending_save = True
+            self.record_button.configure(text="保存记录")
+            self.record_status_var.set(f"保存失败: {len(self.record_rows)} 帧")
+            messagebox.showerror("保存失败", str(exc))
+            return
+
+        row_count = len(self.record_rows)
+        self.record_pending_save = False
+        self.record_button.configure(text="开始记录", state="normal")
+        self.record_status_var.set(f"已保存: {row_count} 点")
+        self._append_log(f"FOC 高速记录已保存: {file_path}, {row_count} 点")
+        messagebox.showinfo("保存完成", f"已保存 {row_count} 点\n{file_path}")
+
+    def _open_pid_config_window(self) -> None:
+        """
+        @brief 打开当前电机的位置环和速度环配置窗口。
+        @return None
+        """
+        if self.pid_window is not None and self.pid_window.winfo_exists():
+            self.pid_window.deiconify()
+            self.pid_window.lift()
+            self.pid_window.focus_force()
+            return
+
+        self.speed_pid_vars = {
+            param_id: tk.StringVar(value="")
+            for _param_name, param_id in MOTOR_PID_PARAMETERS
+        }
+        self.position_pid_vars = {
+            param_id: tk.StringVar(value="")
+            for _param_name, param_id in MOTOR_PID_PARAMETERS
+        }
+
+        self.pid_window = tk.Toplevel(self.root)
+        self.pid_window.title("位置/速度环配置")
+        self.pid_window.resizable(False, False)
+        self.pid_window.transient(self.root)
+        self.pid_window.protocol("WM_DELETE_WINDOW", self._close_pid_config_window)
+
+        content_frame = ttk.Frame(self.pid_window, padding=12)
+        content_frame.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(content_frame, text="当前电机").grid(row=0,
+                                                       column=0,
+                                                       padx=(0, 4),
+                                                       pady=(0, 10),
+                                                       sticky="w")
+        ttk.Label(content_frame, textvariable=self.node_var).grid(row=0,
+                                                                 column=1,
+                                                                 pady=(0, 10),
+                                                                 sticky="w")
+
+        self._build_pid_group(content_frame,
+                              1,
+                              "速度环",
+                              self.speed_pid_vars,
+                              MOTOR_CMD_SET_SPEED_PID_PARAM,
+                              MOTOR_CMD_READ_SPEED_PID_PARAM)
+        self._build_pid_group(content_frame,
+                              2,
+                              "位置环",
+                              self.position_pid_vars,
+                              MOTOR_CMD_SET_POSITION_PID_PARAM,
+                              MOTOR_CMD_READ_POSITION_PID_PARAM)
+
+    def _build_pid_group(self,
+                         parent: ttk.Frame,
+                         row: int,
+                         title: str,
+                         parameter_vars: dict[int, tk.StringVar],
+                         set_command: int,
+                         read_command: int) -> None:
+        """
+        @brief 创建一组 PID 参数编辑控件。
+        @param parent 父级界面容器。
+        @param row 父级网格行号。
+        @param title 参数组标题。
+        @param parameter_vars 参数编号到输入变量的映射。
+        @param set_command 参数写入命令码。
+        @param read_command 参数读取命令码。
+        @return None
+        """
+        group_frame = ttk.LabelFrame(parent, text=title, padding=10)
+        group_frame.grid(row=row,
+                         column=0,
+                         columnspan=2,
+                         padx=0,
+                         pady=(0, 10),
+                         sticky="ew")
+
+        for column, (param_name, param_id) in enumerate(MOTOR_PID_PARAMETERS):
+            ttk.Label(group_frame, text=param_name).grid(row=0,
+                                                        column=column,
+                                                        padx=(0, 8),
+                                                        sticky="w")
+            ttk.Entry(group_frame,
+                      textvariable=parameter_vars[param_id],
+                      width=12).grid(row=1,
+                                     column=column,
+                                     padx=(0, 8),
+                                     pady=(4, 0))
+
+        ttk.Button(group_frame,
+                   text="读取",
+                   command=lambda: self._read_pid_group(read_command)).grid(row=1,
+                                                                           column=5,
+                                                                           padx=(4, 8),
+                                                                           pady=(4, 0))
+        ttk.Button(group_frame,
+                   text="写入",
+                   command=lambda: self._write_pid_group(set_command,
+                                                         parameter_vars)).grid(row=1,
+                                                                              column=6,
+                                                                              pady=(4, 0))
+
+    def _close_pid_config_window(self) -> None:
+        """
+        @brief 关闭位置环和速度环配置窗口。
+        @return None
+        """
+        if self.pid_window is not None:
+            self.pid_window.destroy()
+
+        self.pid_window = None
+
+    def _read_pid_group(self, command: int) -> None:
+        """
+        @brief 读取当前电机的一组 PID 参数。
+        @param command PID 参数读取命令码。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        try:
+            node_id = self._selected_node_id()
+
+            for _param_name, param_id in MOTOR_PID_PARAMETERS:
+                self.client.send_read_pid_param(node_id, command, param_id)
+                self._record_tx(node_id)
+                time.sleep(0.002)
+
+            self._append_log(
+                f"tx node=0x{node_id:02X} {command_text(command)} all"
+            )
+        except Exception as exc:
+            messagebox.showerror("读取失败", str(exc))
+
+    def _write_pid_group(self,
+                         command: int,
+                         parameter_vars: dict[int, tk.StringVar]) -> None:
+        """
+        @brief 写入当前电机的一组 PID 参数。
+        @param command PID 参数写入命令码。
+        @param parameter_vars 参数编号到输入变量的映射。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        try:
+            node_id = self._selected_node_id()
+            values = {
+                param_id: self._parse_pid_value(param_id,
+                                                parameter_vars[param_id].get())
+                for _param_name, param_id in MOTOR_PID_PARAMETERS
+            }
+
+            for _param_name, param_id in MOTOR_PID_PARAMETERS:
+                self.client.send_pid_param(node_id,
+                                           command,
+                                           param_id,
+                                           values[param_id])
+                self._record_tx(node_id)
+                time.sleep(0.002)
+
+            self._append_log(
+                f"tx node=0x{node_id:02X} {command_text(command)} all"
+            )
+        except Exception as exc:
+            messagebox.showerror("写入失败", str(exc))
+
+    def _parse_pid_value(self, param_id: int, text: str) -> float:
+        """
+        @brief 将 PID 参数输入文本转换为单精度浮点数。
+        @param param_id PID 参数编号。
+        @param text 参数输入文本。
+        @return float 单精度浮点参数值。
+        """
+        value = float(text.strip())
+
+        if not math.isfinite(value):
+            raise ValueError("PID 参数必须是有限数值")
+
+        if param_id in (MOTOR_PID_PARAM_I_ACC_MAX, MOTOR_PID_PARAM_OUT_MAX):
+            if (value < 0.0) or (value > 32767.0):
+                raise ValueError("I_ACC_MAX 和 OUT_MAX 必须在 0~32767 范围内")
+
+        try:
+            float32_to_le(value)
+        except OverflowError as exc:
+            raise ValueError("PID 参数超出 float32 范围") from exc
+
+        return value
 
     def _build_new_motor_panel(self) -> None:
         """
@@ -1690,7 +2195,6 @@ class MotorToolApp:
             node_id = self._selected_node_id()
             self.client.send_stop_output(node_id)
             self._record_tx(node_id)
-            self._record_tx(node_id)
             self._append_log(f"tx node=0x{node_id:02X} stop_output")
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
@@ -1703,7 +2207,6 @@ class MotorToolApp:
         try:
             for node_id in MOTOR_NODE_IDS:
                 self.client.send_stop_output(node_id)
-                self._record_tx(node_id)
                 self._record_tx(node_id)
                 time.sleep(0.002)
 
@@ -1845,6 +2348,12 @@ class MotorToolApp:
             if isinstance(event, MotorReportEvent):
                 self._handle_motor_report(event)
 
+            if isinstance(event, PidDebugEvent):
+                self._handle_pid_debug(event)
+
+            if isinstance(event, FocTracePartEvent):
+                self._handle_foc_trace_part(event)
+
             if isinstance(event, MotorAckEvent):
                 self._handle_motor_ack(event)
 
@@ -1872,6 +2381,82 @@ class MotorToolApp:
         state.report_count += 1
         self._append_chart_sample(event)
 
+    def _handle_pid_debug(self, event: PidDebugEvent) -> None:
+        """
+        @brief 处理并按需记录一帧速度环 PID 诊断数据。
+        @param event PID 诊断帧事件。
+        @return None
+        """
+        return
+
+    def _handle_foc_trace_part(self, event: FocTracePartEvent) -> None:
+        """
+        @brief 接收并组装一帧 FOC 高速记录分片。
+        @param event FOC 高速记录分片事件。
+        @return None
+        """
+        if event.node_id != self.record_node_id:
+            return
+
+        sample_parts = self.trace_parts.setdefault(event.sample_index, {})
+        sample_parts[event.part_index] = event.payload
+        completed_count = sum(
+            1
+            for parts in self.trace_parts.values()
+            if len(parts) == len(MOTOR_FOC_TRACE_PART_BASES)
+        )
+        self.record_status_var.set(
+            f"读取高速数据: {completed_count}/{self.trace_expected_count}"
+        )
+
+        if ((self.trace_expected_count > 0)
+            and (completed_count >= self.trace_expected_count)):
+            self._build_foc_trace_rows()
+            self.record_pending_save = True
+            self.record_button.configure(text="保存记录", state="normal")
+            self.record_status_var.set(f"读取完成: {len(self.record_rows)} 点")
+            self._show_trace_save_dialog()
+
+    def _build_foc_trace_rows(self) -> None:
+        """
+        @brief 将已组装的 FOC 高速记录转换为 CSV 行。
+        @return None
+        """
+        decoded_samples: list[tuple[int, int, int, int, int, int, int, int, int, int]] = []
+
+        for sample_index in range(self.trace_expected_count):
+            parts = self.trace_parts.get(sample_index)
+
+            if (parts is None) or (len(parts) != len(MOTOR_FOC_TRACE_PART_BASES)):
+                continue
+
+            raw_sample = b"".join(parts[index] for index in range(3))
+            decoded_samples.append(struct.unpack("<HHHHihBBBB", raw_sample))
+
+        trigger_index = 0
+        for index, sample in enumerate(decoded_samples):
+            if abs(sample[4]) >= 10000:
+                trigger_index = index
+                break
+
+        trigger_timestamp_ms = decoded_samples[trigger_index][0]
+        self.record_rows = []
+
+        for index, sample in enumerate(decoded_samples):
+            relative_ms = ((sample[0] - trigger_timestamp_ms + 32768) % 65536) - 32768
+            self.record_rows.append({
+                "sample_index": index,
+                "trigger_relative_us": relative_ms * 1000,
+                "sensor_angle_mrad": sample[1],
+                "mechanical_angle_mrad": sample[2],
+                "electrical_angle_mrad": sample[3],
+                "speed_mrad_s": sample[4],
+                "q_target": sample[5],
+                "pwm_a": sample[6],
+                "pwm_b": sample[7],
+                "pwm_c": sample[8],
+            })
+
     def _handle_motor_ack(self, event: MotorAckEvent) -> None:
         """
         @brief 处理电机应答事件。
@@ -1886,11 +2471,116 @@ class MotorToolApp:
 
         if event.status == 0:
             self._update_state_from_ack(state, event)
+            self._update_pid_window_from_ack(event)
+
+        if event.command == MOTOR_CMD_FOC_TRACE:
+            self._handle_foc_trace_ack(event)
 
         self._append_log(
             f"rx node=0x{event.node_id:02X} {command_text(event.command)} "
-            f"status={status_text(event.status)}"
+            f"status={status_text(event.status)}{self._pid_ack_detail(event)}"
         )
+
+    def _handle_foc_trace_ack(self, event: MotorAckEvent) -> None:
+        """
+        @brief 处理 FOC 高速记录控制命令应答。
+        @param event 电机应答事件。
+        @return None
+        """
+        if event.status != 0 or len(event.payload) < 8:
+            self.recording = False
+            self.record_button.configure(text="开始记录", state="normal")
+            self.record_status_var.set("高速记录命令失败")
+            return
+
+        action = event.payload[2]
+        sample_count = uint16_from_le(event.payload[4:6])
+        sample_hz = uint16_from_le(event.payload[6:8])
+
+        if action == 1:
+            self.trace_expected_count = sample_count
+            self.trace_sample_hz = sample_hz
+            self.trace_parts = {}
+
+            if sample_count == 0:
+                self.record_button.configure(text="开始记录", state="normal")
+                self.record_status_var.set("高速缓存为空")
+                return
+
+            self.record_status_var.set(f"准备读取 {sample_count} 点...")
+            self.client.send_foc_trace_command(self.record_node_id, 2)
+            self._record_tx(self.record_node_id)
+        else:
+            if action == 2:
+                self.trace_expected_count = sample_count
+                self.trace_sample_hz = sample_hz
+                self.record_status_var.set(f"读取高速数据: 0/{sample_count}")
+
+    def _update_pid_window_from_ack(self, event: MotorAckEvent) -> None:
+        """
+        @brief 根据 PID 成功应答回填配置窗口。
+        @param event 电机应答事件。
+        @return None
+        """
+        if self.pid_window is None or not self.pid_window.winfo_exists():
+            return
+
+        try:
+            selected_node_id = self._selected_node_id()
+        except ValueError:
+            return
+
+        if event.node_id != selected_node_id or len(event.payload) < 7:
+            return
+
+        if event.command in (MOTOR_CMD_SET_SPEED_PID_PARAM,
+                             MOTOR_CMD_READ_SPEED_PID_PARAM):
+            parameter_vars = self.speed_pid_vars
+        elif event.command in (MOTOR_CMD_SET_POSITION_PID_PARAM,
+                               MOTOR_CMD_READ_POSITION_PID_PARAM):
+            parameter_vars = self.position_pid_vars
+        else:
+            return
+
+        param_id = event.payload[2]
+
+        if param_id not in parameter_vars:
+            return
+
+        value = float32_from_le(event.payload[3:7])
+        parameter_vars[param_id].set(self._format_pid_value(value))
+
+    def _format_pid_value(self, value: float) -> str:
+        """
+        @brief 将 PID 单精度浮点值格式化为界面文本。
+        @param value PID 单精度浮点参数值。
+        @return str PID 参数显示文本。
+        """
+        return f"{value:.9g}"
+
+    def _pid_ack_detail(self, event: MotorAckEvent) -> str:
+        """
+        @brief 生成 PID 参数应答日志详情。
+        @param event 电机应答事件。
+        @return str PID 参数详情文本，非 PID 应答时为空。
+        """
+        pid_commands = (
+            MOTOR_CMD_SET_SPEED_PID_PARAM,
+            MOTOR_CMD_READ_SPEED_PID_PARAM,
+            MOTOR_CMD_SET_POSITION_PID_PARAM,
+            MOTOR_CMD_READ_POSITION_PID_PARAM,
+        )
+
+        if event.command not in pid_commands or len(event.payload) < 7:
+            return ""
+
+        param_id = event.payload[2]
+        value = float32_from_le(event.payload[3:7])
+        param_name = next(
+            (name for name, item_id in MOTOR_PID_PARAMETERS if item_id == param_id),
+            f"0x{param_id:02X}",
+        )
+        return f" param={param_name} value={self._format_pid_value(value)}"
 
     def _handle_manage_report(self, event: ManageReportEvent) -> None:
         """

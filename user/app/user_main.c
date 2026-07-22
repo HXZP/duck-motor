@@ -6,7 +6,7 @@
 #include "app/can_protocol.h"
 #include "app/foc_app.h"
 #include "app/log.h"
-#include "app/soft_iic.h"
+#include "app/hardware_iic.h"
 #include "kernel/pt-thread.h"
 
 static uint8_t s_user_main_started = 0U;
@@ -85,8 +85,19 @@ void User_Main(void)
     log_init();
     printf("App start\r\n");
     AppLight_Init();
-    I2C_Init();
-    as5600Init();
+    if (HardwareI2C_Init() != 0U)
+    {
+        printf("Hardware I2C init failed\r\n");
+        Error_Handler();
+        return;
+    }
+
+    if (as5600Init() != 0U)
+    {
+        printf("AS5600 init failed\r\n");
+        Error_Handler();
+        return;
+    }
     foc_app_init();
     can_protocol_init();
     user_main_create_tasks();

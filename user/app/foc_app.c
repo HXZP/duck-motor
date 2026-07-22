@@ -17,9 +17,17 @@ extern TIM_HandleTypeDef htim2;
 static volatile uint8_t foc_update_pending_flag = 0U;
 
 #define FOC_SCHEDULER_TICK_HZ      4000U
-#define FOC_SPEED_LOOP_HZ          100U
-#define FOC_POSITION_LOOP_HZ       25U
-#define FOC_SPEED_SAMPLE_WINDOW    20U
+#define FOC_SPEED_LOOP_HZ          500U
+#define FOC_POSITION_LOOP_HZ       100U
+#define FOC_SPEED_SAMPLE_WINDOW    10U
+#define FOC_MECHANICAL_CYCLE_MRAD  6283
+#define FOC_TRACE_SAMPLE_COUNT     512U
+#define FOC_TRACE_TRIGGER_SPEED    10000
+#define FOC_TRACE_POST_SAMPLES     384U
+#define FOC_TRACE_STATE_IDLE       0U
+#define FOC_TRACE_STATE_ARMED      1U
+#define FOC_TRACE_STATE_POST       2U
+#define FOC_TRACE_STATE_FROZEN     3U
 
 foc_t foc;
 static foc_ctrl_mode_t foc_control_mode = FOC_CTRL_MODE_SPEED;
@@ -148,11 +156,96 @@ static foc_pid_t speed_pid = {
     .out_max = 0,
 };
 
-static uint16_t foc_speed_angle_samples[FOC_SPEED_SAMPLE_WINDOW];
+static int64_t foc_speed_position_samples[FOC_SPEED_SAMPLE_WINDOW];
 static uint32_t foc_speed_time_samples[FOC_SPEED_SAMPLE_WINDOW];
 static uint8_t foc_speed_sample_index = 0U;
-static uint8_t foc_speed_window_ready = 0U;
+static uint8_t foc_speed_sample_count = 0U;
+static uint8_t foc_speed_estimator_initialized = 0U;
+static int32_t foc_speed_previous_angle = 0;
+static int64_t foc_speed_continuous_position = 0;
 static float foc_speed_estimate = 0.0f;
+static foc_trace_sample_t foc_trace_samples[FOC_TRACE_SAMPLE_COUNT];
+static uint16_t foc_trace_write_index = 0U;
+static uint16_t foc_trace_sample_count = 0U;
+static uint16_t foc_trace_post_remaining = 0U;
+static uint8_t foc_trace_state = FOC_TRACE_STATE_IDLE;
+
+/**
+ * @brief 将角度归一化到一个机械周期。
+ * @param angle 待归一化角度，单位：mrad。
+ * @return uint16_t 归一化角度，单位：mrad。
+ */
+static uint16_t foc_trace_normalize_angle(int32_t angle)
+{
+    int32_t normalized = angle % FOC_MECHANICAL_CYCLE_MRAD;
+
+    if (normalized < 0)
+    {
+        normalized += FOC_MECHANICAL_CYCLE_MRAD;
+    }
+
+    return (uint16_t)normalized;
+}
+
+/**
+ * @brief 在传感器更新周期记录一条 FOC 高速采样。
+ * @return void
+ */
+static void foc_trace_record_sample(void)
+{
+    foc_trace_sample_t *sample;
+
+    if ((foc_trace_state != FOC_TRACE_STATE_ARMED)
+        && (foc_trace_state != FOC_TRACE_STATE_POST))
+    {
+        return;
+    }
+
+    sample = &foc_trace_samples[foc_trace_write_index];
+    sample->timestamp_ms = (uint16_t)foc.cfg->get_time();
+    sample->sensor_angle = foc_trace_normalize_angle(foc.angle.sensor_angle);
+    sample->mechanical_angle = foc_trace_normalize_angle(foc.angle.mech_angle);
+    sample->electrical_angle = foc_trace_normalize_angle(foc.angle.elec_angle);
+    sample->speed = (int32_t)foc_speed_estimate;
+    sample->q_target = (int16_t)foc.target_park.q;
+    sample->pwm_a = (uint8_t)(((uint32_t)foc.pwm_duty.a * 255U) / foc.pwm_duty.T);
+    sample->pwm_b = (uint8_t)(((uint32_t)foc.pwm_duty.b * 255U) / foc.pwm_duty.T);
+    sample->pwm_c = (uint8_t)(((uint32_t)foc.pwm_duty.c * 255U) / foc.pwm_duty.T);
+    sample->reserved = 0U;
+
+    foc_trace_write_index++;
+    if (foc_trace_write_index >= FOC_TRACE_SAMPLE_COUNT)
+    {
+        foc_trace_write_index = 0U;
+    }
+
+    if (foc_trace_sample_count < FOC_TRACE_SAMPLE_COUNT)
+    {
+        foc_trace_sample_count++;
+    }
+
+    if (foc_trace_state == FOC_TRACE_STATE_ARMED)
+    {
+        if ((foc_speed_estimate >= (float)FOC_TRACE_TRIGGER_SPEED)
+            || (foc_speed_estimate <= (float)(-FOC_TRACE_TRIGGER_SPEED)))
+        {
+            foc_trace_state = FOC_TRACE_STATE_POST;
+            foc_trace_post_remaining = FOC_TRACE_POST_SAMPLES;
+        }
+    }
+    else
+    {
+        if (foc_trace_post_remaining > 0U)
+        {
+            foc_trace_post_remaining--;
+        }
+
+        if (foc_trace_post_remaining == 0U)
+        {
+            foc_trace_state = FOC_TRACE_STATE_FROZEN;
+        }
+    }
+}
 
 /**
  * @brief 根据角度差和实际时间间隔计算机械速度。
@@ -160,7 +253,7 @@ static float foc_speed_estimate = 0.0f;
  * @param elapsed_ms 实际时间间隔，单位：ms。
  * @return float 机械速度，单位：mrad/s。
  */
-static float foc_calc_speed_mrad_s(int32_t delta, uint32_t elapsed_ms)
+static float foc_calc_speed_mrad_s(int64_t delta, uint32_t elapsed_ms)
 {
     if (elapsed_ms == 0U)
     {
@@ -184,13 +277,13 @@ static int32_t foc_calc_angle_delta(int32_t current_angle, int32_t previous_angl
 
     if (delta > FOC_PIx1000)
     {
-        delta -= 2 * FOC_PIx1000;
+        delta -= FOC_MECHANICAL_CYCLE_MRAD;
     }
     else
     {
         if (delta < (-FOC_PIx1000))
         {
-            delta += 2 * FOC_PIx1000;
+            delta += FOC_MECHANICAL_CYCLE_MRAD;
         }
     }
 
@@ -200,59 +293,70 @@ static int32_t foc_calc_angle_delta(int32_t current_angle, int32_t previous_angl
 /**
  * @brief 根据传感器采样历史更新速度估计值。
  * @return void
- * @note 当前窗口为 20 个传感器采样点；默认 2000Hz 采样时，估计窗口约为 10ms。
+ * @note 相邻采样负责角度解包，连续角度窗口负责降低量化噪声。
+ * @note 当前窗口为 10 个传感器采样点；默认 2000Hz 采样时，估计窗口约为 5ms。
  */
 static void foc_update_speed_estimate(void)
 {
     int32_t current_angle;
-    int32_t delta;
+    int32_t sample_delta;
+    int64_t position_delta;
     uint32_t current_time_ms;
     uint32_t elapsed_ms;
     uint8_t history_index;
 
     current_angle = foc_get_angle(&foc);
     current_time_ms = foc.cfg->get_time();
-    foc_speed_angle_samples[foc_speed_sample_index] = (uint16_t)current_angle;
+
+    if (foc_speed_estimator_initialized == 0U)
+    {
+        foc_speed_estimator_initialized = 1U;
+        foc_speed_previous_angle = current_angle;
+        foc_speed_continuous_position = 0;
+        foc_speed_position_samples[0] = foc_speed_continuous_position;
+        foc_speed_time_samples[0] = current_time_ms;
+        foc_speed_sample_index = 1U;
+        foc_speed_sample_count = 1U;
+        foc_speed_estimate = 0.0f;
+        return;
+    }
+
+    sample_delta = foc_calc_angle_delta(current_angle, foc_speed_previous_angle);
+    foc_speed_previous_angle = current_angle;
+    foc_speed_continuous_position += sample_delta;
+
+    if (foc_speed_sample_count < FOC_SPEED_SAMPLE_WINDOW)
+    {
+        foc_speed_position_samples[foc_speed_sample_index] = foc_speed_continuous_position;
+        foc_speed_time_samples[foc_speed_sample_index] = current_time_ms;
+        position_delta = foc_speed_continuous_position - foc_speed_position_samples[0];
+        elapsed_ms = current_time_ms - foc_speed_time_samples[0];
+        foc_speed_estimate = foc_calc_speed_mrad_s(position_delta, elapsed_ms);
+
+        foc_speed_sample_count++;
+        foc_speed_sample_index++;
+
+        if (foc_speed_sample_index == FOC_SPEED_SAMPLE_WINDOW)
+        {
+            foc_speed_sample_index = 0U;
+        }
+
+        return;
+    }
+
+    history_index = foc_speed_sample_index + 1U;
+
+    if (history_index == FOC_SPEED_SAMPLE_WINDOW)
+    {
+        history_index = 0U;
+    }
+
+    foc_speed_position_samples[foc_speed_sample_index] = foc_speed_continuous_position;
     foc_speed_time_samples[foc_speed_sample_index] = current_time_ms;
-
-    if (foc_speed_window_ready == 0U)
-    {
-        if (foc_speed_sample_index == 0U)
-        {
-            foc_speed_estimate = 0.0f;
-        }
-        else
-        {
-            delta = foc_calc_angle_delta(current_angle, foc_speed_angle_samples[0]);
-            elapsed_ms = current_time_ms - foc_speed_time_samples[0];
-            foc_speed_estimate = foc_calc_speed_mrad_s(delta, elapsed_ms);
-        }
-
-        if (foc_speed_sample_index == (FOC_SPEED_SAMPLE_WINDOW - 2U))
-        {
-            foc_speed_window_ready = 1U;
-        }
-    }
-    else
-    {
-        history_index = foc_speed_sample_index + 1U;
-
-        if (history_index == FOC_SPEED_SAMPLE_WINDOW)
-        {
-            history_index = 0U;
-        }
-
-        delta = foc_calc_angle_delta(current_angle, foc_speed_angle_samples[history_index]);
-        elapsed_ms = current_time_ms - foc_speed_time_samples[history_index];
-        foc_speed_estimate = foc_calc_speed_mrad_s(delta, elapsed_ms);
-    }
-
-    foc_speed_sample_index++;
-
-    if (foc_speed_sample_index == FOC_SPEED_SAMPLE_WINDOW)
-    {
-        foc_speed_sample_index = 0U;
-    }
+    position_delta = foc_speed_continuous_position - foc_speed_position_samples[history_index];
+    elapsed_ms = current_time_ms - foc_speed_time_samples[history_index];
+    foc_speed_estimate = foc_calc_speed_mrad_s(position_delta, elapsed_ms);
+    foc_speed_sample_index = history_index;
 }
 
 /**
@@ -336,6 +440,11 @@ int32_t foc_app_update(void)
     if (control_loop_due != 0U)
     {
         foc_control(&foc);
+    }
+
+    if (sensor_loop_due != 0U)
+    {
+        foc_trace_record_sample();
     }
 
     can_protocol_report_motor_state();
@@ -564,6 +673,111 @@ void foc_speed_pid_get_target(float *target)
 int32_t foc_get_speed_estimate(void)
 {
     return (int32_t)foc_speed_estimate;
+}
+
+/**
+ * @brief 获取速度环 PID 运行时诊断数据。
+ * @param runtime 运行时诊断数据输出指针。
+ * @return void
+ */
+void foc_speed_pid_get_runtime(foc_speed_pid_runtime_t *runtime)
+{
+    if (runtime == NULL)
+    {
+        return;
+    }
+
+    runtime->target = speed_pid.target;
+    runtime->feedback = speed_pid.percent;
+    runtime->error = speed_pid.err;
+    runtime->error_delta = speed_pid.err_deta;
+    runtime->integral_acc = speed_pid.i_acc;
+    runtime->integral_output = speed_pid.i_out;
+    runtime->output = speed_pid.out;
+    runtime->q_target = foc.target_park.q;
+}
+
+/**
+ * @brief 启动 FOC 高速环形记录。
+ * @return void
+ */
+void foc_trace_start(void)
+{
+    foc_trace_write_index = 0U;
+    foc_trace_sample_count = 0U;
+    foc_trace_post_remaining = 0U;
+    foc_trace_state = FOC_TRACE_STATE_ARMED;
+}
+
+/**
+ * @brief 停止并冻结 FOC 高速记录。
+ * @return void
+ */
+void foc_trace_stop(void)
+{
+    if ((foc_trace_state == FOC_TRACE_STATE_ARMED)
+        || (foc_trace_state == FOC_TRACE_STATE_POST))
+    {
+        foc_trace_state = FOC_TRACE_STATE_FROZEN;
+    }
+}
+
+/**
+ * @brief 获取 FOC 高速记录状态。
+ * @return uint8_t 高速记录状态值。
+ */
+uint8_t foc_trace_get_state(void)
+{
+    return foc_trace_state;
+}
+
+/**
+ * @brief 获取已保存的 FOC 高速采样数量。
+ * @return uint16_t 采样数量。
+ */
+uint16_t foc_trace_get_count(void)
+{
+    return foc_trace_sample_count;
+}
+
+/**
+ * @brief 获取 FOC 高速记录采样频率。
+ * @return uint16_t 采样频率，单位：Hz。
+ */
+uint16_t foc_trace_get_sample_hz(void)
+{
+    return foc.cfg->sensor_hz;
+}
+
+/**
+ * @brief 按时间顺序读取一条 FOC 高速采样。
+ * @param index 按时间排序后的采样下标。
+ * @param sample 采样数据输出指针。
+ * @return uint8_t 成功返回 1，参数无效返回 0。
+ */
+uint8_t foc_trace_get_sample(uint16_t index, foc_trace_sample_t *sample)
+{
+    uint16_t oldest_index = 0U;
+    uint16_t physical_index;
+
+    if ((sample == NULL) || (index >= foc_trace_sample_count))
+    {
+        return 0U;
+    }
+
+    if (foc_trace_sample_count >= FOC_TRACE_SAMPLE_COUNT)
+    {
+        oldest_index = foc_trace_write_index;
+    }
+
+    physical_index = (uint16_t)(oldest_index + index);
+    if (physical_index >= FOC_TRACE_SAMPLE_COUNT)
+    {
+        physical_index = (uint16_t)(physical_index - FOC_TRACE_SAMPLE_COUNT);
+    }
+
+    *sample = foc_trace_samples[physical_index];
+    return 1U;
 }
 
 /**

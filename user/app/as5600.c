@@ -1,5 +1,8 @@
 #include "as5600.h"
-#include "soft_iic.h"
+#include "app/hardware_iic.h"
+#include "stm32f1xx_hal.h"
+
+#include <stddef.h>
 
 // AS5600 定义
 #define AS5600_ADDRESS        0x36 // AS5600设备地址(7位地址)
@@ -10,34 +13,53 @@
 #define AS5600_STATUS         0x0B
 #define AS5600_CONF_H         0x07
 #define AS5600_CONF_L         0x08
+#define AS5600_CONF_SF_FAST   0x03
+#define AS5600_CONF_FTH_6_LSB 0x04
+#define AS5600_CONF_TARGET_H  (AS5600_CONF_SF_FAST | AS5600_CONF_FTH_6_LSB)
+#define AS5600_CONF_TARGET_L  0x00U
+#define AS5600_CONF_TARGET    (((uint16_t)AS5600_CONF_TARGET_H << 8) | \
+                               AS5600_CONF_TARGET_L)
 
 #define PI                    3.14159265359f
 #define TWO_PI                6.28318530718f
 #define ANGLE_TO_RADIANS      0.00153435538f  // 2π/4096
 
+static uint16_t as5600_boot_config = 0U;
+static uint16_t as5600_active_config = 0U;
+static uint32_t as5600_read_last_cycles = 0U;
+static uint32_t as5600_read_min_cycles = UINT32_MAX;
+static uint32_t as5600_read_max_cycles = 0U;
+static uint64_t as5600_read_total_cycles = 0U;
+static uint32_t as5600_read_count = 0U;
 
 /**
- * @brief 写入AS5600寄存器
- * @param regAddress 寄存器地址
- * @param data 要写入的数据
- * @return 0:成功, 1:失败
+ * @brief 启用 Cortex-M3 DWT 周期计数器。
+ * @return void
  */
-static uint8_t as5600WriteReg(uint8_t regAddress, uint8_t data)
+static void as5600EnableCycleCounter(void)
 {
-    return I2C_Write_Bytes(AS5600_ADDRESS, regAddress, &data, 1);
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 }
 
 /**
- * @brief 多字节写入AS5600寄存器
- * @param regAddress 起始寄存器地址
- * @param data 要写入的数据数组
- * @param len 数据长度
- * @return 0:成功, 1:失败
+ * @brief 将 CPU 周期数转换为微秒。
+ * @param cycles CPU 周期数。
+ * @return uint32_t 对应耗时，单位：us。
  */
-static uint8_t as5600WriteMultipleReg(uint8_t regAddress, uint8_t *data, uint8_t len)
+static uint32_t as5600CyclesToUs(uint64_t cycles)
 {
-    return I2C_Write_Bytes(AS5600_ADDRESS, regAddress, data, len);
+    uint32_t hclk_hz = HAL_RCC_GetHCLKFreq();
+
+    if (hclk_hz == 0U)
+    {
+        return 0U;
+    }
+
+    return (uint32_t)((cycles * 1000000ULL) / hclk_hz);
 }
+
 
 /**
  * @brief 读取AS5600寄存器
@@ -47,10 +69,13 @@ static uint8_t as5600WriteMultipleReg(uint8_t regAddress, uint8_t *data, uint8_t
 static uint8_t as5600ReadReg(uint8_t regAddress)
 {
     uint8_t data = 0;
-    if (I2C_Write_Bytes(AS5600_ADDRESS, regAddress, &data, 1) == 0) {
+
+    if (HardwareI2C_ReadBytes(AS5600_ADDRESS, regAddress, &data, 1U) == 0U)
+    {
         return data;
     }
-    return 0xFF; // 读取失败
+
+    return 0xFF;
 }
 
 /**
@@ -62,7 +87,40 @@ static uint8_t as5600ReadReg(uint8_t regAddress)
  */
 static uint8_t as5600ReadMultipleReg(uint8_t regAddress, uint8_t *data, uint8_t len)
 {
-    return I2C_Read_Bytes(AS5600_ADDRESS, regAddress, data, len);
+    return HardwareI2C_ReadBytes(AS5600_ADDRESS, regAddress, data, len);
+}
+
+/**
+ * @brief 分别读取 AS5600 CONF 高字节和低字节。
+ * @param config_high CONF 高字节输出指针。
+ * @param config_low CONF 低字节输出指针。
+ * @return uint8_t 成功返回 0，失败返回 1。
+ * @note CONF 使用两个单字节事务，避免当前器件连续读取低字节时返回 0xFF。
+ */
+static uint8_t as5600ReadConfig(uint8_t *config_high, uint8_t *config_low)
+{
+    if ((config_high == NULL) || (config_low == NULL))
+    {
+        return 1U;
+    }
+
+    if (HardwareI2C_ReadBytes(AS5600_ADDRESS,
+                              AS5600_CONF_H,
+                              config_high,
+                              1U) != 0U)
+    {
+        return 1U;
+    }
+
+    if (HardwareI2C_ReadBytes(AS5600_ADDRESS,
+                              AS5600_CONF_L,
+                              config_low,
+                              1U) != 0U)
+    {
+        return 1U;
+    }
+
+    return 0U;
 }
 
 /**
@@ -71,15 +129,38 @@ static uint8_t as5600ReadMultipleReg(uint8_t regAddress, uint8_t *data, uint8_t 
  */
 uint16_t as5600GetRawAngle(void)
 {
-    uint8_t angleData[2];
-    
-    // 一次性读取高低字节
-    if (as5600ReadMultipleReg(AS5600_RAW_ANGLE_H, angleData, 2) == 0) {
-        // 组合高4位和低8位
+    uint8_t angleData[2] = {0U};
+    uint8_t read_result;
+    uint32_t start_cycles;
+    uint32_t elapsed_cycles;
+
+    start_cycles = DWT->CYCCNT;
+    read_result = HardwareI2C_ReadBytes(AS5600_ADDRESS,
+                                       AS5600_RAW_ANGLE_H,
+                                       angleData,
+                                       2U);
+
+    if (read_result == 0U)
+    {
+        elapsed_cycles = DWT->CYCCNT - start_cycles;
+        as5600_read_last_cycles = elapsed_cycles;
+        as5600_read_total_cycles += elapsed_cycles;
+        as5600_read_count++;
+
+        if (elapsed_cycles < as5600_read_min_cycles)
+        {
+            as5600_read_min_cycles = elapsed_cycles;
+        }
+
+        if (elapsed_cycles > as5600_read_max_cycles)
+        {
+            as5600_read_max_cycles = elapsed_cycles;
+        }
+
         return (angleData[0] & 0x0F) << 8 | angleData[1];
     }
-    
-    return 0xFFFF; // 读取失败
+
+    return 0xFFFF;
 }
 
 /**
@@ -179,8 +260,23 @@ uint8_t as5600CheckMagnetStatus(void)
  */
 uint8_t as5600SetConfig(uint8_t configHigh, uint8_t configLow)
 {
-    uint8_t configData[2] = {configHigh, configLow};
-    return as5600WriteMultipleReg(AS5600_CONF_H, configData, 2);
+    if (HardwareI2C_WriteBytes(AS5600_ADDRESS,
+                               AS5600_CONF_H,
+                               &configHigh,
+                               1U) != 0U)
+    {
+        return 1U;
+    }
+
+    if (HardwareI2C_WriteBytes(AS5600_ADDRESS,
+                               AS5600_CONF_L,
+                               &configLow,
+                               1U) != 0U)
+    {
+        return 1U;
+    }
+
+    return 0U;
 }
 
 /**
@@ -189,19 +285,94 @@ uint8_t as5600SetConfig(uint8_t configHigh, uint8_t configLow)
  */
 uint8_t as5600Init(void)
 {
-    // 检查设备是否响应
-    uint8_t deviceStatus = as5600ReadReg(AS5600_STATUS);
-    if (deviceStatus == 0xFF) {
-        return 1; // 设备无响应
+    uint8_t config_data[2] = {0U};
+    uint8_t device_status;
+    uint8_t magnet_status;
+
+    as5600EnableCycleCounter();
+    device_status = as5600ReadReg(AS5600_STATUS);
+    if (device_status == 0xFF)
+    {
+        return 1;
     }
-    
-    // 检查磁铁状态
-    uint8_t magnetStatus = as5600CheckMagnetStatus();
-    if (magnetStatus != 0) {
-        return 2; // 磁铁状态异常
+
+    if (as5600ReadConfig(&config_data[0], &config_data[1]) != 0U)
+    {
+        return 1;
     }
-    
-    return 0; // 初始化成功
+
+    as5600_boot_config = ((uint16_t)config_data[0] << 8) | config_data[1];
+    config_data[0] = AS5600_CONF_TARGET_H;
+    config_data[1] = AS5600_CONF_TARGET_L;
+
+    if (as5600SetConfig(config_data[0], config_data[1]) != 0U)
+    {
+        return 1;
+    }
+
+    if (as5600ReadConfig(&config_data[0], &config_data[1]) != 0U)
+    {
+        return 1;
+    }
+
+    as5600_active_config = ((uint16_t)config_data[0] << 8) | config_data[1];
+    if (as5600_active_config != AS5600_CONF_TARGET)
+    {
+        return 1;
+    }
+
+    magnet_status = as5600CheckMagnetStatus();
+    if (magnet_status != 0U)
+    {
+        return 2;
+    }
+
+    if (HardwareI2C_SetReadPointer(AS5600_ADDRESS, AS5600_RAW_ANGLE_H) != 0U)
+    {
+        return 1;
+    }
+
+    as5600_read_last_cycles = 0U;
+    as5600_read_min_cycles = UINT32_MAX;
+    as5600_read_max_cycles = 0U;
+    as5600_read_total_cycles = 0U;
+    as5600_read_count = 0U;
+    return 0;
+}
+
+/**
+ * @brief 获取 AS5600 配置和读取耗时诊断数据。
+ * @param diagnostic 诊断数据输出指针。
+ * @return void
+ */
+void as5600GetDiagnostic(as5600_diagnostic_t *diagnostic)
+{
+    uint64_t average_cycles = 0U;
+
+    if (diagnostic == NULL)
+    {
+        return;
+    }
+
+    if (as5600_read_count > 0U)
+    {
+        average_cycles = as5600_read_total_cycles / as5600_read_count;
+    }
+
+    diagnostic->boot_config = as5600_boot_config;
+    diagnostic->active_config = as5600_active_config;
+    diagnostic->read_last_us = as5600CyclesToUs(as5600_read_last_cycles);
+    if (as5600_read_min_cycles == UINT32_MAX)
+    {
+        diagnostic->read_min_us = 0U;
+    }
+    else
+    {
+        diagnostic->read_min_us = as5600CyclesToUs(as5600_read_min_cycles);
+    }
+
+    diagnostic->read_max_us = as5600CyclesToUs(as5600_read_max_cycles);
+    diagnostic->read_average_us = as5600CyclesToUs(average_cycles);
 }
 
 /**

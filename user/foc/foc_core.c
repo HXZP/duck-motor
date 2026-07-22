@@ -380,17 +380,25 @@ void foc_init(foc_t *foc, const foc_cfg_t *cfg)
 	foc->cfg = cfg;
 }
 
-/*angle:0~1*/
+/**
+ * @brief 更新 FOC 机械角度和电角度。
+ * @param foc FOC 控制器指针。
+ * @return int32_t 传感器原始机械角度，单位：mrad。
+ * @note 机械角度和电角度统一使用零点减去传感器角度的正方向。
+ * @note 三相输出必须使用反序相映射，使电角度方向与定子坐标方向匹配。
+ */
 int32_t foc_sensor_updata(foc_t *foc)
-{  
+{
+    int32_t mechanical_angle;
+
     foc->angle.sensor_angle = foc->cfg->get_angle_rad();
-    foc->angle.mech_angle = foc_angle_cycle(foc->angle.sensor_angle - foc->angle.zero_angle);
-    foc->angle.elec_angle = foc->angle.mech_angle * foc->info.pole_pairs;
-	foc->park.theta = foc->angle.elec_angle;//angle_normalize(foc->angle.elec_angle);
+    mechanical_angle = foc_angle_cycle(foc->angle.zero_angle
+                                       - foc->angle.sensor_angle);
+    foc->angle.mech_angle = mechanical_angle;
+    foc->angle.elec_angle = mechanical_angle * foc->info.pole_pairs;
+    foc->park.theta = foc->angle.elec_angle;
     foc->angle.angle = foc->angle.mech_angle;
 
-    
-//    printf("mech_angle: %d, mech_angle_diff: %d\n", foc->speed.mech_angle, foc->speed.mech_angle_diff);
     return foc->angle.sensor_angle;
 }
 
