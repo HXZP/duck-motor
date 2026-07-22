@@ -43,7 +43,7 @@ extern "C" {
 #define USER_INFO_MAX_LOOP_HZ           4000u
 #define USER_INFO_DEFAULT_PHASE_MAP     0u
 #define USER_INFO_MIN_PHASE_MAP         0u
-#define USER_INFO_MAX_PHASE_MAP         5u
+#define USER_INFO_MAX_PHASE_MAP         1u
 
 #define USER_INFO_OTA_FLAG_APP          0u
 #define USER_INFO_OTA_FLAG_BOOT         1u

@@ -19,7 +19,7 @@ static volatile uint8_t foc_update_pending_flag = 0U;
 #define FOC_SCHEDULER_TICK_HZ      4000U
 #define FOC_SPEED_LOOP_HZ          500U
 #define FOC_POSITION_LOOP_HZ       100U
-#define FOC_SPEED_SAMPLE_WINDOW    10U
+#define FOC_SPEED_SAMPLE_WINDOW    20U
 #define FOC_MECHANICAL_CYCLE_MRAD  6283
 #define FOC_TRACE_SAMPLE_COUNT     512U
 #define FOC_TRACE_TRIGGER_SPEED    10000
@@ -294,7 +294,7 @@ static int32_t foc_calc_angle_delta(int32_t current_angle, int32_t previous_angl
  * @brief 根据传感器采样历史更新速度估计值。
  * @return void
  * @note 相邻采样负责角度解包，连续角度窗口负责降低量化噪声。
- * @note 当前窗口为 10 个传感器采样点；默认 2000Hz 采样时，估计窗口约为 5ms。
+ * @note 当前窗口为 20 个传感器采样点；默认 2000Hz 采样时，估计窗口约为 10ms。
  */
 static void foc_update_speed_estimate(void)
 {

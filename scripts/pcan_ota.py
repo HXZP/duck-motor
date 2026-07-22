@@ -40,7 +40,11 @@ DEFAULT_FRAME_DELAY_MS = 1.0
 DEFAULT_APP_BITRATE = "1m"
 DEFAULT_OTA_BITRATE = "1m"
 DEFAULT_BITRATE = DEFAULT_OTA_BITRATE
-DEFAULT_QUIESCE_NODE_IDS = tuple(range(1, 8))
+DEFAULT_QUIESCE_NODE_IDS = tuple(
+    node_id
+    for node_id in range(0x01, 0x80)
+    if node_id != DEFAULT_NODE_ID
+)
 
 
 @dataclass(frozen=True)
@@ -328,7 +332,7 @@ class PcanOtaClient:
 
     def quiesce_motor_reports(self) -> None:
         """
-        @brief 关闭常见业务节点主动上报，降低 OTA 期间总线占用。
+        @brief 关闭全部合法业务节点主动上报，降低 OTA 期间总线占用。
         @return void
         """
 
@@ -341,7 +345,7 @@ class PcanOtaClient:
         self.drain()
         for node_id in DEFAULT_QUIESCE_NODE_IDS:
             self.send_report_config(node_id, False, 10)
-            time.sleep(0.02)
+            time.sleep(0.001)
 
         ack_deadline = time.time() + 0.5
         ack_count = 0
@@ -350,7 +354,9 @@ class PcanOtaClient:
             if frame is None:
                 continue
 
-            if (0x180 < frame.std_id < 0x188) and (len(frame.data) >= 2):
+            if ((0x180 < frame.std_id < 0x200)
+                and (frame.std_id != 0x1FE)
+                and (len(frame.data) >= 2)):
                 if (frame.data[0] == 0x23) and (frame.data[1] == 0x00):
                     ack_count += 1
                     self.debug(

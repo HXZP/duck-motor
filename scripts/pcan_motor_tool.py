@@ -10,14 +10,19 @@ from __future__ import annotations
 import argparse
 import csv
 import ctypes
+import json
 import math
+import os
 import queue
 import struct
+import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 
@@ -134,7 +139,15 @@ MOTOR_MODES = {
     "position": 2,
 }
 
-MOTOR_NODE_IDS = tuple(range(0x01, 0x09))
+MOTOR_SCAN_NODE_IDS = tuple(
+    node_id
+    for node_id in range(0x01, 0x80)
+    if node_id != MOTOR_MANAGE_NODE_ID
+)
+PHASE_MAP_OPTIONS = (
+    "正序 (phase_map=0)",
+    "反序 (phase_map=1)",
+)
 
 PCAN_CHANNELS = {
     "PCAN_USBBUS1": 0x51,
@@ -285,6 +298,20 @@ class ErrorEvent:
     """@brief 上位机错误事件。"""
 
     message: str
+
+
+@dataclass
+class OtaLogEvent:
+    """@brief OTA 子进程日志事件。"""
+
+    message: str
+
+
+@dataclass
+class OtaFinishedEvent:
+    """@brief OTA 子进程结束事件。"""
+
+    return_code: int
 
 
 def now_monotonic_ms() -> int:
@@ -459,6 +486,37 @@ def node_id_from_label(node_label: str) -> int:
         return parse_int_auto(stripped_text[start:-1])
 
     return parse_int_auto(stripped_text)
+
+
+def phase_map_from_text(phase_text: str) -> int:
+    """
+    @brief 从相序选项文本解析相序映射编号。
+    @param phase_text 相序选项文本。
+    @return int 相序映射编号。
+    """
+    stripped_text = phase_text.strip()
+
+    if stripped_text in PHASE_MAP_OPTIONS:
+        return PHASE_MAP_OPTIONS.index(stripped_text)
+
+    phase_map = parse_int_auto(stripped_text)
+
+    if phase_map not in (0, 1):
+        raise ValueError("相序只能选择正序或反序")
+
+    return phase_map
+
+
+def phase_map_text(phase_map: int | None) -> str:
+    """
+    @brief 将相序映射编号转换为界面选项文本。
+    @param phase_map 相序映射编号。
+    @return str 相序选项文本。
+    """
+    if phase_map in (0, 1):
+        return PHASE_MAP_OPTIONS[phase_map]
+
+    return PHASE_MAP_OPTIONS[0]
 
 
 def command_text(command: int | None) -> str:
@@ -1084,15 +1142,14 @@ class MotorToolApp:
         """
         self.root = root
         self.root.title("Duck Mid PCAN Motor Tool")
+        self.root.geometry("1400x900")
+        self.root.minsize(1100, 700)
         self.events: queue.Queue[object] = queue.Queue()
         self.client = PcanClient(self.events)
-        self.motor_states: dict[int, MotorState] = {
-            node_id: MotorState(name=motor_name_from_node_id(node_id), node_id=node_id)
-            for node_id in MOTOR_NODE_IDS
-        }
+        self.motor_states: dict[int, MotorState] = {}
         self.channel_var = tk.StringVar(value=channel_label_from_value(default_channel))
         self.bitrate_var = tk.StringVar(value=default_bitrate)
-        self.node_var = tk.StringVar(value=node_label_from_id(0x01))
+        self.node_var = tk.StringVar(value="0x01")
         self.enable_var = tk.BooleanVar(value=True)
         self.mode_var = tk.StringVar(value="current")
         self.target_var = tk.StringVar(value="0")
@@ -1103,12 +1160,40 @@ class MotorToolApp:
         self.new_uid_var = tk.StringVar(value="")
         self.new_node_var = tk.StringVar(value="0x04")
         self.new_pole_pairs_var = tk.StringVar(value="7")
-        self.new_phase_map_var = tk.StringVar(value="0")
+        self.new_phase_map_var = tk.StringVar(value=PHASE_MAP_OPTIONS[0])
         self.new_zero_after_config_var = tk.BooleanVar(value=True)
         self.new_report_off_var = tk.BooleanVar(value=True)
-        self.pid_window: tk.Toplevel | None = None
-        self.speed_pid_vars: dict[int, tk.StringVar] = {}
-        self.position_pid_vars: dict[int, tk.StringVar] = {}
+        self.winding_current_var = tk.StringVar(value="1500")
+        self.winding_duration_var = tk.StringVar(value="200")
+        self.winding_result_var = tk.StringVar(value="未测试")
+        self.winding_test_active = False
+        self.winding_test_start_position: int | None = None
+        self.winding_test_node_id = 0
+        self.winding_test_direction = 1
+        self.winding_test_current = 0
+        self.winding_test_duration_ms = 0
+        self.speed_pid_vars: dict[int, tk.StringVar] = {
+            param_id: tk.StringVar(value="")
+            for _param_name, param_id in MOTOR_PID_PARAMETERS
+        }
+        self.position_pid_vars: dict[int, tk.StringVar] = {
+            param_id: tk.StringVar(value="")
+            for _param_name, param_id in MOTOR_PID_PARAMETERS
+        }
+        self.foc_parameter_vars: dict[int, tk.StringVar] = {
+            MOTOR_FOC_PARAM_POLE_PAIRS: tk.StringVar(value=""),
+            MOTOR_FOC_PARAM_MASTER_VOLTAGE_MV: tk.StringVar(value=""),
+            MOTOR_FOC_PARAM_CONTROL_HZ: tk.StringVar(value=""),
+            MOTOR_FOC_PARAM_SENSOR_HZ: tk.StringVar(value=""),
+            MOTOR_FOC_PARAM_PHASE_MAP: tk.StringVar(value=PHASE_MAP_OPTIONS[0]),
+        }
+        self.target_unit_var = tk.StringVar(value="控制量")
+        self.ota_node_var = tk.StringVar(value="0x01")
+        self.ota_version_var = tk.StringVar(value="")
+        self.ota_status_var = tk.StringVar(value="未开始")
+        self.ota_packages: dict[str, Path] = {}
+        self.ota_running = False
+        self.ota_reconnect_after = False
         self.recording = False
         self.record_pending_save = False
         self.record_node_id = 0x01
@@ -1122,12 +1207,10 @@ class MotorToolApp:
         self.manage_reports: dict[int, ManageReportEvent] = {}
         self.manage_listen_active = False
         self.pending_new_config: tuple[int, int, int, int] | None = None
-        self.chart_history: dict[int, deque[tuple[int, int, int]]] = {
-            node_id: deque()
-            for node_id in MOTOR_NODE_IDS
-        }
+        self.chart_history: dict[int, deque[tuple[int, int, int]]] = {}
 
         self._build_layout()
+        self._scan_ota_versions()
         self._refresh_motor_table()
         self._process_events()
         self._refresh_chart()
@@ -1140,10 +1223,6 @@ class MotorToolApp:
         """
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
-        self.root.rowconfigure(2, weight=0)
-        self.root.rowconfigure(3, weight=0)
-        self.root.rowconfigure(4, weight=1)
-        self.root.rowconfigure(5, weight=0)
 
         top_frame = ttk.Frame(self.root, padding=8)
         top_frame.grid(row=0, column=0, sticky="ew")
@@ -1172,19 +1251,67 @@ class MotorToolApp:
                                                                 column=6,
                                                                 sticky="w")
 
-        self._build_motor_table()
-        self._build_control_panel()
-        self._build_new_motor_panel()
-        self._build_chart_panel()
-        self._build_log_panel()
+        self.page_notebook = ttk.Notebook(self.root)
+        self.page_notebook.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
 
-    def _build_motor_table(self) -> None:
+        self.new_motor_page = ttk.Frame(self.page_notebook, padding=8)
+        self.debug_page = ttk.Frame(self.page_notebook, padding=8)
+        self.ota_page = ttk.Frame(self.page_notebook, padding=8)
+        self.page_notebook.add(self.new_motor_page, text="新电机配置")
+        self.page_notebook.add(self.debug_page, text="电机调试")
+        self.page_notebook.add(self.ota_page, text="电机 OTA")
+        self.page_notebook.bind("<<NotebookTabChanged>>", self._on_page_changed)
+
+        self._build_new_motor_panel(self.new_motor_page)
+        self._build_debug_page(self.debug_page)
+        self._build_ota_page(self.ota_page)
+        self._build_log_panel(self.root)
+
+    def _build_debug_page(self, parent: ttk.Frame) -> None:
         """
-        @brief 创建电机状态表格。
+        @brief 创建电机调试页面。
+        @param parent 调试页父级容器。
         @return None
         """
-        table_frame = ttk.Frame(self.root, padding=(8, 0, 8, 8))
-        table_frame.grid(row=1, column=0, sticky="nsew")
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(3, weight=1)
+
+        self._build_motor_table(parent)
+        self._build_control_panel(parent)
+
+        parameter_frame = ttk.Frame(parent)
+        parameter_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        parameter_frame.columnconfigure(0, weight=1)
+        parameter_frame.columnconfigure(1, weight=1)
+
+        pid_frame = ttk.Frame(parameter_frame)
+        pid_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        pid_frame.columnconfigure(0, weight=1)
+        self._build_pid_group(pid_frame,
+                              0,
+                              "速度环 PID",
+                              self.speed_pid_vars,
+                              MOTOR_CMD_SET_SPEED_PID_PARAM,
+                              MOTOR_CMD_READ_SPEED_PID_PARAM)
+        self._build_pid_group(pid_frame,
+                              1,
+                              "位置环 PID",
+                              self.position_pid_vars,
+                              MOTOR_CMD_SET_POSITION_PID_PARAM,
+                              MOTOR_CMD_READ_POSITION_PID_PARAM)
+
+        self._build_foc_group(parameter_frame)
+        self._build_chart_panel(parent)
+
+    def _build_motor_table(self, parent: ttk.Frame) -> None:
+        """
+        @brief 创建电机状态表格。
+        @param parent 表格父级容器。
+        @return None
+        """
+        table_frame = ttk.LabelFrame(parent, text="在线电机", padding=8)
+        table_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
@@ -1205,7 +1332,7 @@ class MotorToolApp:
         self.motor_table = ttk.Treeview(table_frame,
                                         columns=columns,
                                         show="tree headings",
-                                        height=8)
+                                        height=5)
         self.motor_table.heading("#0", text="电机")
         self.motor_table.heading("node", text="节点")
         self.motor_table.heading("position", text="位置 mrad")
@@ -1234,56 +1361,66 @@ class MotorToolApp:
         self.motor_table.column("ack", width=150, anchor="center")
         self.motor_table.column("tx", width=70, anchor="e")
         self.motor_table.grid(row=0, column=0, sticky="nsew")
+        table_scrollbar = ttk.Scrollbar(table_frame,
+                                        orient="vertical",
+                                        command=self.motor_table.yview)
+        table_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.motor_table.configure(yscrollcommand=table_scrollbar.set)
+        self.motor_table.bind("<<TreeviewSelect>>", self._on_motor_table_select)
 
-        for node_id in MOTOR_NODE_IDS:
-            self._ensure_table_item(node_id)
-
-    def _build_control_panel(self) -> None:
+    def _build_control_panel(self, parent: ttk.Frame) -> None:
         """
         @brief 创建电机控制面板。
+        @param parent 控制面板父级容器。
         @return None
         """
-        control_frame = ttk.LabelFrame(self.root, text="电机控制", padding=8)
-        control_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
-        control_frame.columnconfigure(13, weight=1)
-
-        node_labels = [
-            node_label_from_id(node_id)
-            for node_id in MOTOR_NODE_IDS
-        ]
+        control_frame = ttk.LabelFrame(parent, text="运行控制", padding=8)
+        control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        control_frame.columnconfigure(14, weight=1)
 
         ttk.Label(control_frame, text="电机").grid(row=0, column=0, padx=(0, 4))
-        ttk.Combobox(control_frame,
-                     textvariable=self.node_var,
-                     values=node_labels,
-                     width=8,
-                     state="readonly").grid(row=0, column=1, padx=(0, 8))
+        self.node_combo = ttk.Combobox(control_frame,
+                                       textvariable=self.node_var,
+                                       values=(),
+                                       width=8)
+        self.node_combo.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(control_frame,
+                   text="扫描在线电机",
+                   command=self._scan_online_motors).grid(row=0,
+                                                          column=2,
+                                                          padx=(0, 8))
         ttk.Checkbutton(control_frame,
                         text="使能",
-                        variable=self.enable_var).grid(row=0, column=2, padx=(0, 8))
-        ttk.Label(control_frame, text="模式").grid(row=0, column=3, padx=(0, 4))
-        ttk.Combobox(control_frame,
-                     textvariable=self.mode_var,
-                     values=list(MOTOR_MODES.keys()),
-                     width=10,
-                     state="readonly").grid(row=0, column=4, padx=(0, 8))
+                        variable=self.enable_var).grid(row=0, column=3, padx=(0, 8))
+        ttk.Label(control_frame, text="模式").grid(row=0, column=4, padx=(0, 4))
+        mode_combo = ttk.Combobox(control_frame,
+                                  textvariable=self.mode_var,
+                                  values=list(MOTOR_MODES.keys()),
+                                  width=10,
+                                  state="readonly")
+        mode_combo.grid(row=0, column=5, padx=(0, 8))
+        mode_combo.bind("<<ComboboxSelected>>", self._update_target_unit)
         ttk.Button(control_frame,
                    text="设置模式",
-                   command=self._send_run_mode).grid(row=0, column=5, padx=(0, 8))
+                   command=self._send_run_mode).grid(row=0, column=6, padx=(0, 8))
 
-        ttk.Label(control_frame, text="目标").grid(row=0, column=6, padx=(0, 4))
+        ttk.Label(control_frame, text="目标").grid(row=0, column=7, padx=(0, 4))
         ttk.Entry(control_frame,
                   textvariable=self.target_var,
-                  width=12).grid(row=0, column=7, padx=(0, 8))
+                  width=12).grid(row=0, column=8, padx=(0, 4))
+        ttk.Label(control_frame,
+                  textvariable=self.target_unit_var).grid(row=0,
+                                                          column=9,
+                                                          padx=(0, 8))
         ttk.Button(control_frame,
                    text="发送目标",
-                   command=self._send_target_by_mode).grid(row=0, column=8, padx=(0, 8))
+                   command=self._send_target_by_mode).grid(row=0, column=10, padx=(0, 8))
         ttk.Button(control_frame,
                    text="停止当前",
-                   command=self._send_stop_selected).grid(row=0, column=9, padx=(0, 8))
+                   command=self._send_stop_selected).grid(row=0, column=11, padx=(0, 8))
         ttk.Button(control_frame,
                    text="停止全部",
-                   command=self._send_stop_all).grid(row=0, column=10, padx=(0, 8))
+                   command=self._send_stop_all).grid(row=0, column=12, padx=(0, 8))
 
         ttk.Label(control_frame, text="上报 Hz").grid(row=1, column=0, padx=(0, 4), pady=(8, 0))
         ttk.Entry(control_frame,
@@ -1343,19 +1480,13 @@ class MotorToolApp:
                                                     column=10,
                                                     padx=(0, 8),
                                                     pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="位置/速度环配置",
-                   command=self._open_pid_config_window).grid(row=1,
-                                                             column=11,
-                                                             padx=(0, 8),
-                                                             pady=(8, 0))
         self.record_button = ttk.Button(control_frame,
                                         text="开始记录",
                                         command=self._toggle_recording)
-        self.record_button.grid(row=0, column=11, padx=(0, 8))
+        self.record_button.grid(row=0, column=13, padx=(0, 8))
         ttk.Label(control_frame,
                   textvariable=self.record_status_var).grid(row=0,
-                                                            column=12,
+                                                            column=14,
                                                             padx=(0, 8),
                                                             sticky="w")
 
@@ -1487,57 +1618,6 @@ class MotorToolApp:
         self._append_log(f"FOC 高速记录已保存: {file_path}, {row_count} 点")
         messagebox.showinfo("保存完成", f"已保存 {row_count} 点\n{file_path}")
 
-    def _open_pid_config_window(self) -> None:
-        """
-        @brief 打开当前电机的位置环和速度环配置窗口。
-        @return None
-        """
-        if self.pid_window is not None and self.pid_window.winfo_exists():
-            self.pid_window.deiconify()
-            self.pid_window.lift()
-            self.pid_window.focus_force()
-            return
-
-        self.speed_pid_vars = {
-            param_id: tk.StringVar(value="")
-            for _param_name, param_id in MOTOR_PID_PARAMETERS
-        }
-        self.position_pid_vars = {
-            param_id: tk.StringVar(value="")
-            for _param_name, param_id in MOTOR_PID_PARAMETERS
-        }
-
-        self.pid_window = tk.Toplevel(self.root)
-        self.pid_window.title("位置/速度环配置")
-        self.pid_window.resizable(False, False)
-        self.pid_window.transient(self.root)
-        self.pid_window.protocol("WM_DELETE_WINDOW", self._close_pid_config_window)
-
-        content_frame = ttk.Frame(self.pid_window, padding=12)
-        content_frame.grid(row=0, column=0, sticky="nsew")
-        ttk.Label(content_frame, text="当前电机").grid(row=0,
-                                                       column=0,
-                                                       padx=(0, 4),
-                                                       pady=(0, 10),
-                                                       sticky="w")
-        ttk.Label(content_frame, textvariable=self.node_var).grid(row=0,
-                                                                 column=1,
-                                                                 pady=(0, 10),
-                                                                 sticky="w")
-
-        self._build_pid_group(content_frame,
-                              1,
-                              "速度环",
-                              self.speed_pid_vars,
-                              MOTOR_CMD_SET_SPEED_PID_PARAM,
-                              MOTOR_CMD_READ_SPEED_PID_PARAM)
-        self._build_pid_group(content_frame,
-                              2,
-                              "位置环",
-                              self.position_pid_vars,
-                              MOTOR_CMD_SET_POSITION_PID_PARAM,
-                              MOTOR_CMD_READ_POSITION_PID_PARAM)
-
     def _build_pid_group(self,
                          parent: ttk.Frame,
                          row: int,
@@ -1588,15 +1668,65 @@ class MotorToolApp:
                                                                               column=6,
                                                                               pady=(4, 0))
 
-    def _close_pid_config_window(self) -> None:
+    def _build_foc_group(self, parent: ttk.Frame) -> None:
         """
-        @brief 关闭位置环和速度环配置窗口。
+        @brief 创建内嵌 FOC 参数配置区域。
+        @param parent FOC 参数区域父级容器。
         @return None
         """
-        if self.pid_window is not None:
-            self.pid_window.destroy()
+        group_frame = ttk.LabelFrame(parent, text="FOC 参数", padding=10)
+        group_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
-        self.pid_window = None
+        parameter_items = (
+            ("极对数", "对", MOTOR_FOC_PARAM_POLE_PAIRS),
+            ("母线电压", "mV", MOTOR_FOC_PARAM_MASTER_VOLTAGE_MV),
+            ("FOC 频率", "Hz", MOTOR_FOC_PARAM_CONTROL_HZ),
+            ("角度采样", "Hz", MOTOR_FOC_PARAM_SENSOR_HZ),
+        )
+
+        for row, (name, unit, param_id) in enumerate(parameter_items):
+            ttk.Label(group_frame, text=name).grid(row=row,
+                                                   column=0,
+                                                   sticky="w",
+                                                   pady=(0, 4))
+            ttk.Entry(group_frame,
+                      textvariable=self.foc_parameter_vars[param_id],
+                      width=12).grid(row=row,
+                                     column=1,
+                                     padx=(8, 4),
+                                     pady=(0, 4))
+            ttk.Label(group_frame, text=unit).grid(row=row,
+                                                   column=2,
+                                                   sticky="w",
+                                                   pady=(0, 4))
+
+        ttk.Label(group_frame, text="相序").grid(row=4,
+                                                 column=0,
+                                                 sticky="w",
+                                                 pady=(0, 4))
+        ttk.Combobox(group_frame,
+                     textvariable=self.foc_parameter_vars[MOTOR_FOC_PARAM_PHASE_MAP],
+                     values=PHASE_MAP_OPTIONS,
+                     width=20,
+                     state="readonly").grid(row=4,
+                                            column=1,
+                                            columnspan=2,
+                                            padx=(8, 0),
+                                            pady=(0, 4),
+                                            sticky="w")
+        ttk.Button(group_frame,
+                   text="读取全部",
+                   command=self._read_foc_group).grid(row=5,
+                                                      column=0,
+                                                      pady=(4, 0),
+                                                      sticky="w")
+        ttk.Button(group_frame,
+                   text="写入全部",
+                   command=self._write_foc_group).grid(row=5,
+                                                       column=1,
+                                                       padx=(8, 0),
+                                                       pady=(4, 0),
+                                                       sticky="w")
 
     def _read_pid_group(self, command: int) -> None:
         """
@@ -1680,69 +1810,131 @@ class MotorToolApp:
 
         return value
 
-    def _build_new_motor_panel(self) -> None:
+    def _build_new_motor_panel(self, parent: ttk.Frame) -> None:
         """
         @brief 创建新电机配置面板。
+        @param parent 新电机配置页父级容器。
         @return None
         """
-        config_frame = ttk.LabelFrame(self.root, text="新电机配置", padding=8)
-        config_frame.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
-        config_frame.columnconfigure(14, weight=1)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
 
-        node_labels = [
-            node_label_from_id(node_id)
-            for node_id in MOTOR_NODE_IDS
-        ]
+        discovery_frame = ttk.LabelFrame(parent, text="电机扫描", padding=8)
+        discovery_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
+        discovery_frame.columnconfigure(0, weight=1)
+        discovery_frame.rowconfigure(1, weight=1)
+
+        discovery_toolbar = ttk.Frame(discovery_frame)
+        discovery_toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        ttk.Button(discovery_toolbar,
+                   text="扫描新电机",
+                   command=self._listen_manage_reports).grid(row=0,
+                                                             column=0,
+                                                             padx=(0, 8))
+        ttk.Button(discovery_toolbar,
+                   text="识别选中电机",
+                   command=self._send_manage_identify).grid(row=0,
+                                                            column=1,
+                                                            padx=(0, 8))
+
+        self.manage_table = ttk.Treeview(discovery_frame,
+                                         columns=("uid", "configured", "node"),
+                                         show="headings",
+                                         height=6)
+        self.manage_table.heading("uid", text="UID32")
+        self.manage_table.heading("configured", text="配置状态")
+        self.manage_table.heading("node", text="当前节点")
+        self.manage_table.column("uid", width=180, anchor="center")
+        self.manage_table.column("configured", width=120, anchor="center")
+        self.manage_table.column("node", width=100, anchor="center")
+        self.manage_table.grid(row=1, column=0, sticky="nsew")
+        self.manage_table.bind("<<TreeviewSelect>>", self._on_manage_table_select)
+
+        config_frame = ttk.LabelFrame(parent, text="参数配置", padding=8)
+        config_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        config_frame.columnconfigure(13, weight=1)
 
         ttk.Label(config_frame, text="UID32").grid(row=0, column=0, padx=(0, 4))
         ttk.Entry(config_frame,
                   textvariable=self.new_uid_var,
                   width=12).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(config_frame,
-                   text="监听发现",
-                   command=self._listen_manage_reports).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(config_frame,
-                   text="识别",
-                   command=self._send_manage_identify).grid(row=0, column=3, padx=(0, 12))
-
-        ttk.Label(config_frame, text="新节点").grid(row=0, column=4, padx=(0, 4))
-        ttk.Combobox(config_frame,
-                     textvariable=self.new_node_var,
-                     values=node_labels,
-                     width=8).grid(row=0, column=5, padx=(0, 8))
-        ttk.Label(config_frame, text="极对数").grid(row=0, column=6, padx=(0, 4))
+        ttk.Label(config_frame, text="新节点").grid(row=0, column=2, padx=(0, 4))
+        ttk.Entry(config_frame,
+                  textvariable=self.new_node_var,
+                  width=8).grid(row=0, column=3, padx=(0, 8))
+        ttk.Label(config_frame, text="极对数").grid(row=0, column=4, padx=(0, 4))
         ttk.Entry(config_frame,
                   textvariable=self.new_pole_pairs_var,
-                  width=6).grid(row=0, column=7, padx=(0, 8))
-        ttk.Label(config_frame, text="相序").grid(row=0, column=8, padx=(0, 4))
+                  width=6).grid(row=0, column=5, padx=(0, 4))
+        ttk.Label(config_frame, text="对").grid(row=0, column=6, padx=(0, 8))
+        ttk.Label(config_frame, text="相序").grid(row=0, column=7, padx=(0, 4))
         ttk.Combobox(config_frame,
                      textvariable=self.new_phase_map_var,
-                     values=[str(index) for index in range(6)],
-                     width=5).grid(row=0, column=9, padx=(0, 8))
+                     values=PHASE_MAP_OPTIONS,
+                     width=20,
+                     state="readonly").grid(row=0, column=8, padx=(0, 8))
         ttk.Checkbutton(config_frame,
                         text="配置后校零",
                         variable=self.new_zero_after_config_var).grid(row=0,
-                                                                     column=10,
+                                                                     column=9,
                                                                      padx=(0, 8))
         ttk.Checkbutton(config_frame,
                         text="关闭上报",
                         variable=self.new_report_off_var).grid(row=0,
-                                                              column=11,
+                                                              column=10,
                                                               padx=(0, 8))
         ttk.Button(config_frame,
                    text="配置新电机",
-                   command=self._configure_new_motor).grid(row=0, column=12, padx=(0, 8))
-        ttk.Button(config_frame,
-                   text="读 FOC",
-                   command=self._send_read_foc_selected).grid(row=0, column=13, padx=(0, 8))
+                   command=self._configure_new_motor).grid(row=0,
+                                                          column=11,
+                                                          padx=(0, 8))
 
-    def _build_chart_panel(self) -> None:
+        test_frame = ttk.LabelFrame(parent, text="绕组方向测试", padding=8)
+        test_frame.grid(row=2, column=0, sticky="ew")
+        test_frame.columnconfigure(12, weight=1)
+        ttk.Label(test_frame, text="测试节点").grid(row=0, column=0, padx=(0, 4))
+        ttk.Entry(test_frame,
+                  textvariable=self.new_node_var,
+                  width=8).grid(row=0, column=1, padx=(0, 8))
+        ttk.Label(test_frame, text="相序").grid(row=0, column=2, padx=(0, 4))
+        ttk.Combobox(test_frame,
+                     textvariable=self.new_phase_map_var,
+                     values=PHASE_MAP_OPTIONS,
+                     width=20,
+                     state="readonly").grid(row=0, column=3, padx=(0, 8))
+        ttk.Label(test_frame, text="测试电流").grid(row=0, column=4, padx=(0, 4))
+        ttk.Entry(test_frame,
+                  textvariable=self.winding_current_var,
+                  width=8).grid(row=0, column=5, padx=(0, 4))
+        ttk.Label(test_frame, text="控制量").grid(row=0, column=6, padx=(0, 8))
+        ttk.Label(test_frame, text="持续时间").grid(row=0, column=7, padx=(0, 4))
+        ttk.Entry(test_frame,
+                  textvariable=self.winding_duration_var,
+                  width=8).grid(row=0, column=8, padx=(0, 4))
+        ttk.Label(test_frame, text="ms").grid(row=0, column=9, padx=(0, 8))
+        ttk.Button(test_frame,
+                   text="正向测试",
+                   command=self._start_positive_winding_test).grid(row=0,
+                                                                   column=10,
+                                                                   padx=(0, 8))
+        ttk.Button(test_frame,
+                   text="反向测试",
+                   command=self._start_negative_winding_test).grid(row=0,
+                                                                   column=11,
+                                                                   padx=(0, 8))
+        ttk.Label(test_frame,
+                  textvariable=self.winding_result_var).grid(row=0,
+                                                             column=12,
+                                                             sticky="w")
+
+    def _build_chart_panel(self, parent: ttk.Frame) -> None:
         """
         @brief 创建当前电机位置和速度曲线区域。
+        @param parent 曲线区域父级容器。
         @return None
         """
-        chart_frame = ttk.LabelFrame(self.root, text="当前电机曲线", padding=8)
-        chart_frame.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        chart_frame = ttk.LabelFrame(parent, text="当前电机曲线", padding=8)
+        chart_frame.grid(row=3, column=0, sticky="nsew")
         chart_frame.rowconfigure(1, weight=1)
         chart_frame.columnconfigure(0, weight=1)
 
@@ -1753,24 +1945,279 @@ class MotorToolApp:
                   textvariable=self.chart_window_var,
                   width=8).grid(row=0, column=1, padx=(0, 8))
         ttk.Label(chart_toolbar,
-                  text="蓝色=位置，橙色=速度").grid(row=0, column=2, sticky="w")
+                  text="蓝色=位置 (mrad)，橙色=速度 (mrad/s)").grid(row=0,
+                                                                  column=2,
+                                                                  sticky="w")
 
         self.chart_canvas = tk.Canvas(chart_frame,
-                                      height=260,
+                                      height=200,
                                       bg="#111827",
                                       highlightthickness=0)
         self.chart_canvas.grid(row=1, column=0, sticky="nsew")
 
-    def _build_log_panel(self) -> None:
+    def _build_ota_page(self, parent: ttk.Frame) -> None:
         """
-        @brief 创建日志面板。
+        @brief 创建电机 OTA 页面。
+        @param parent OTA 页父级容器。
         @return None
         """
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=8)
-        log_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 8))
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+
+        control_frame = ttk.LabelFrame(parent, text="OTA 配置", padding=12)
+        control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        control_frame.columnconfigure(8, weight=1)
+
+        ttk.Label(control_frame, text="电机节点").grid(row=0,
+                                                       column=0,
+                                                       padx=(0, 4))
+        self.ota_node_combo = ttk.Combobox(control_frame,
+                                           textvariable=self.ota_node_var,
+                                           values=(),
+                                           width=10)
+        self.ota_node_combo.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(control_frame,
+                   text="扫描在线电机",
+                   command=self._scan_online_motors).grid(row=0,
+                                                          column=2,
+                                                          padx=(0, 12))
+        ttk.Label(control_frame, text="固件版本").grid(row=0,
+                                                       column=3,
+                                                       padx=(0, 4))
+        self.ota_version_combo = ttk.Combobox(control_frame,
+                                              textvariable=self.ota_version_var,
+                                              values=(),
+                                              width=28,
+                                              state="readonly")
+        self.ota_version_combo.grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(control_frame,
+                   text="刷新版本",
+                   command=self._scan_ota_versions).grid(row=0,
+                                                         column=5,
+                                                         padx=(0, 12))
+        self.ota_button = ttk.Button(control_frame,
+                                     text="开始 OTA",
+                                     command=self._start_ota)
+        self.ota_button.grid(row=0, column=6, padx=(0, 8))
+        self.ota_progress = ttk.Progressbar(control_frame,
+                                            mode="indeterminate",
+                                            length=160)
+        self.ota_progress.grid(row=0, column=7, padx=(0, 8))
+        ttk.Label(control_frame,
+                  textvariable=self.ota_status_var).grid(row=0,
+                                                         column=8,
+                                                         sticky="w")
+
+        package_frame = ttk.LabelFrame(parent, text="可用固件", padding=8)
+        package_frame.grid(row=1, column=0, sticky="nsew")
+        package_frame.columnconfigure(0, weight=1)
+        package_frame.rowconfigure(0, weight=1)
+        self.ota_package_table = ttk.Treeview(package_frame,
+                                              columns=("version", "file", "size"),
+                                              show="headings",
+                                              height=12)
+        self.ota_package_table.heading("version", text="版本")
+        self.ota_package_table.heading("file", text="OTA 固件")
+        self.ota_package_table.heading("size", text="大小 (byte)")
+        self.ota_package_table.column("version", width=140, anchor="center")
+        self.ota_package_table.column("file", width=560, anchor="w")
+        self.ota_package_table.column("size", width=120, anchor="e")
+        self.ota_package_table.grid(row=0, column=0, sticky="nsew")
+        self.ota_package_table.bind("<<TreeviewSelect>>", self._on_ota_package_select)
+
+    def _on_page_changed(self, _event: tk.Event) -> None:
+        """
+        @brief 处理顶层页面切换事件。
+        @param _event Tk 页面切换事件。
+        @return None
+        """
+        selected_tab = self.page_notebook.select()
+
+        if selected_tab == str(self.ota_page):
+            self._scan_ota_versions()
+
+    def _scan_ota_versions(self) -> None:
+        """
+        @brief 扫描固件包目录中的可用 OTA 版本。
+        @return None
+        """
+        package_root = Path(__file__).resolve().parents[1] / "firmware_package"
+        packages: list[tuple[tuple[int, ...], str, Path]] = []
+
+        if package_root.exists():
+            for manifest_path in package_root.glob("motor_duck_v*/manifest.json"):
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    version = str(manifest["version"])
+                    artifact = next(
+                        item
+                        for item in manifest["artifacts"]
+                        if item["role"] == "ota_app_bin"
+                    )
+                    firmware_path = manifest_path.parent / str(artifact["file"])
+
+                    if firmware_path.exists():
+                        version_key = tuple(int(part) for part in version.split("."))
+                        packages.append((version_key, f"v{version}", firmware_path))
+                except (KeyError, OSError, ValueError, StopIteration, json.JSONDecodeError):
+                    continue
+
+        packages.sort(key=lambda item: item[0], reverse=True)
+        self.ota_packages = {
+            label: firmware_path
+            for _version_key, label, firmware_path in packages
+        }
+
+        for item_id in self.ota_package_table.get_children():
+            self.ota_package_table.delete(item_id)
+
+        for _version_key, label, firmware_path in packages:
+            self.ota_package_table.insert("",
+                                          "end",
+                                          iid=label,
+                                          values=(label,
+                                                  firmware_path.name,
+                                                  firmware_path.stat().st_size))
+
+        version_labels = list(self.ota_packages.keys())
+        self.ota_version_combo.configure(values=version_labels)
+
+        if len(version_labels) > 0:
+            if self.ota_version_var.get() not in self.ota_packages:
+                self.ota_version_var.set(version_labels[0])
+
+            self.ota_status_var.set(f"找到 {len(version_labels)} 个版本")
+        else:
+            self.ota_version_var.set("")
+            self.ota_status_var.set("未找到 OTA 固件")
+
+    def _on_ota_package_select(self, _event: tk.Event) -> None:
+        """
+        @brief 将 OTA 固件表选中项同步到版本选择框。
+        @param _event Tk 表格选择事件。
+        @return None
+        """
+        selection = self.ota_package_table.selection()
+
+        if len(selection) == 0:
+            return
+
+        self.ota_version_var.set(selection[0])
+
+    def _start_ota(self) -> None:
+        """
+        @brief 校验 OTA 参数并启动后台 OTA 子进程。
+        @return None
+        """
+        if self.ota_running:
+            return
+
+        try:
+            node_id = node_id_from_label(self.ota_node_var.get())
+            self._validate_business_node_id(node_id)
+            version_label = self.ota_version_var.get()
+            firmware_path = self.ota_packages[version_label]
+            channel = channel_value_from_label(self.channel_var.get())
+            bitrate = self.bitrate_var.get().lower()
+        except (KeyError, ValueError) as exc:
+            messagebox.showerror("OTA 参数错误", str(exc))
+            return
+
+        self.ota_reconnect_after = self.connected
+
+        if self.connected:
+            self.client.disconnect()
+            self.connected = False
+            self.connect_button.configure(text="连接")
+            self.status_var.set("OTA 独占 PCAN 通道")
+
+        command = [
+            sys.executable,
+            str(Path(__file__).with_name("pcan_ota.py")),
+            "--file",
+            str(firmware_path),
+            "--channel",
+            f"0x{channel:X}",
+            "--app-bitrate",
+            bitrate,
+            "--ota-bitrate",
+            bitrate,
+            "--node",
+            f"0x{node_id:02X}",
+        ]
+        self.ota_running = True
+        self.connect_button.configure(state="disabled")
+        self.ota_button.configure(state="disabled")
+        self.ota_progress.start(10)
+        self.ota_status_var.set(f"正在升级 0x{node_id:02X} -> {version_label}")
+        self._append_log(f"OTA start node=0x{node_id:02X} version={version_label}")
+        worker = threading.Thread(target=self._run_ota_process,
+                                  args=(command,),
+                                  daemon=True)
+        worker.start()
+
+    def _run_ota_process(self, command: list[str]) -> None:
+        """
+        @brief 在后台执行 OTA 子进程并转发输出。
+        @param command OTA 子进程命令参数。
+        @return None
+        """
+        environment = os.environ.copy()
+        environment["PYTHONUTF8"] = "1"
+
+        try:
+            process = subprocess.Popen(command,
+                                       stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT,
+                                       text=True,
+                                       encoding="utf-8",
+                                       errors="replace",
+                                       env=environment)
+            assert process.stdout is not None
+
+            for line in process.stdout:
+                self.events.put(OtaLogEvent(line.rstrip()))
+
+            return_code = process.wait()
+        except Exception as exc:
+            self.events.put(OtaLogEvent(f"OTA 启动失败: {exc}"))
+            return_code = 1
+
+        self.events.put(OtaFinishedEvent(return_code))
+
+    def _handle_ota_finished(self, event: OtaFinishedEvent) -> None:
+        """
+        @brief 处理 OTA 子进程结束事件并恢复 PCAN 连接。
+        @param event OTA 子进程结束事件。
+        @return None
+        """
+        self.ota_running = False
+        self.connect_button.configure(state="normal")
+        self.ota_button.configure(state="normal")
+        self.ota_progress.stop()
+
+        if event.return_code == 0:
+            self.ota_status_var.set("OTA 完成")
+            self._append_log("OTA completed")
+        else:
+            self.ota_status_var.set(f"OTA 失败，退出码 {event.return_code}")
+            self._append_log(f"OTA failed return_code={event.return_code}")
+
+        if self.ota_reconnect_after:
+            self.ota_reconnect_after = False
+            self._connect_selected_channel(show_error=False)
+
+    def _build_log_panel(self, parent: tk.Misc) -> None:
+        """
+        @brief 创建日志面板。
+        @param parent 日志区域父级容器。
+        @return None
+        """
+        log_frame = ttk.LabelFrame(parent, text="日志", padding=8)
+        log_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
         log_frame.columnconfigure(0, weight=1)
 
-        self.log_text = tk.Text(log_frame, height=8, width=120)
+        self.log_text = tk.Text(log_frame, height=4, width=120)
         self.log_text.grid(row=0, column=0, sticky="ew")
         self.log_text.configure(state="disabled")
 
@@ -1779,6 +2226,10 @@ class MotorToolApp:
         @brief 切换 PCAN 连接状态。
         @return None
         """
+        if self.ota_running:
+            messagebox.showwarning("OTA 进行中", "OTA 完成前不能切换 PCAN 连接")
+            return
+
         if self.connected:
             self.client.disconnect()
             self.connected = False
@@ -1792,18 +2243,31 @@ class MotorToolApp:
             self.status_var.set("未连接")
             return
 
+        self._connect_selected_channel(show_error=True)
+
+    def _connect_selected_channel(self, show_error: bool) -> bool:
+        """
+        @brief 使用界面当前参数连接 PCAN 通道。
+        @param show_error 连接失败时是否弹出错误窗口。
+        @return bool 连接成功返回 true，否则返回 false。
+        """
         try:
             channel = channel_value_from_label(self.channel_var.get())
             bitrate = PCAN_BITRATES[self.bitrate_var.get()]
             self.client.connect(channel, bitrate)
         except Exception as exc:
-            messagebox.showerror("连接失败", str(exc))
-            return
+            self.status_var.set(f"连接失败: {exc}")
+
+            if show_error:
+                messagebox.showerror("连接失败", str(exc))
+
+            return False
 
         self.connected = True
         self.connect_button.configure(text="断开")
         self.status_var.set(f"已连接 channel=0x{channel:X} bitrate={self.bitrate_var.get()}")
         self._append_log("PCAN connected")
+        return True
 
     def _scan_channels(self) -> None:
         """
@@ -1837,11 +2301,105 @@ class MotorToolApp:
         @return int 节点 ID。
         """
         node_id = node_id_from_label(self.node_var.get())
-
-        if node_id not in MOTOR_NODE_IDS:
-            raise ValueError("节点 ID 范围必须为 0x01~0x08")
-
+        self._validate_business_node_id(node_id)
         return node_id
+
+    def _validate_business_node_id(self, node_id: int) -> None:
+        """
+        @brief 校验业务电机节点 ID。
+        @param node_id 待校验节点 ID。
+        @return None
+        """
+        if node_id not in MOTOR_SCAN_NODE_IDS:
+            raise ValueError("节点 ID 必须为 0x01~0x7F，且不能使用管理节点 0x7E")
+
+    def _scan_online_motors(self) -> None:
+        """
+        @brief 扫描全部业务节点并发现在线电机。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        self.motor_states.clear()
+        self.chart_history.clear()
+
+        for item_id in self.motor_table.get_children():
+            self.motor_table.delete(item_id)
+
+        try:
+            for node_id in MOTOR_SCAN_NODE_IDS:
+                self.client.send_simple_command(node_id, MOTOR_CMD_READ_APP_VERSION)
+                time.sleep(0.001)
+        except Exception as exc:
+            messagebox.showerror("扫描失败", str(exc))
+            return
+
+        self.status_var.set("正在扫描在线电机...")
+        self._append_log("scan online motors")
+        self.root.after(800, self._finish_online_motor_scan)
+
+    def _finish_online_motor_scan(self) -> None:
+        """
+        @brief 完成在线电机扫描并更新节点选择列表。
+        @return None
+        """
+        node_ids = sorted(self.motor_states.keys(), reverse=True)
+        self._update_node_choices(node_ids)
+        self.status_var.set(f"在线电机 {len(node_ids)} 台")
+        self._append_log(
+            "online motors: "
+            + (", ".join(f"0x{node_id:02X}" for node_id in node_ids) or "none")
+        )
+
+    def _update_node_choices(self, node_ids: list[int]) -> None:
+        """
+        @brief 更新调试页和 OTA 页的节点选项。
+        @param node_ids 在线节点 ID 列表。
+        @return None
+        """
+        node_labels = [node_label_from_id(node_id) for node_id in node_ids]
+        self.node_combo.configure(values=node_labels)
+        self.ota_node_combo.configure(values=node_labels)
+
+        if len(node_labels) == 0:
+            return
+
+        if self.node_var.get() not in node_labels:
+            self.node_var.set(node_labels[0])
+
+        if self.ota_node_var.get() not in node_labels:
+            self.ota_node_var.set(node_labels[0])
+
+    def _on_motor_table_select(self, _event: tk.Event) -> None:
+        """
+        @brief 将在线电机表选中节点同步到调试控件。
+        @param _event Tk 表格选择事件。
+        @return None
+        """
+        selection = self.motor_table.selection()
+
+        if len(selection) == 0:
+            return
+
+        node_id = int(selection[0])
+        node_label = node_label_from_id(node_id)
+        self.node_var.set(node_label)
+        self.ota_node_var.set(node_label)
+
+    def _update_target_unit(self, _event: tk.Event | None = None) -> None:
+        """
+        @brief 根据控制模式更新目标值单位。
+        @param _event 可选的 Tk 选择事件。
+        @return None
+        """
+        units = {
+            "current": "控制量",
+            "speed": "mrad/s",
+            "position": "mrad",
+        }
+        self.target_unit_var.set(units.get(self.mode_var.get(), ""))
 
     def _report_period_from_hz(self) -> int:
         """
@@ -1877,6 +2435,7 @@ class MotorToolApp:
         state = MotorState(name=motor_name_from_node_id(node_id), node_id=node_id)
         self.motor_states[node_id] = state
         self._ensure_table_item(node_id)
+        self._update_node_choices(sorted(self.motor_states.keys(), reverse=True))
 
         return state
 
@@ -1936,10 +2495,7 @@ class MotorToolApp:
         @return int 节点 ID。
         """
         node_id = node_id_from_label(self.new_node_var.get())
-
-        if node_id not in MOTOR_NODE_IDS:
-            raise ValueError("新节点 ID 范围必须为 0x01~0x08")
-
+        self._validate_business_node_id(node_id)
         return node_id
 
     def _parse_new_foc_config(self) -> tuple[int, int]:
@@ -1948,13 +2504,10 @@ class MotorToolApp:
         @return tuple[int, int] 极对数和相序映射编号。
         """
         pole_pairs = parse_int_auto(self.new_pole_pairs_var.get())
-        phase_map = parse_int_auto(self.new_phase_map_var.get())
+        phase_map = phase_map_from_text(self.new_phase_map_var.get())
 
         if (pole_pairs < 1) or (pole_pairs > 32):
             raise ValueError("极对数必须为 1~32")
-
-        if (phase_map < 0) or (phase_map > 5):
-            raise ValueError("相序必须为 0~5")
 
         return pole_pairs, phase_map
 
@@ -1988,6 +2541,7 @@ class MotorToolApp:
 
         reports = sorted(self.manage_reports.values(),
                          key=lambda item: (item.configured != 0, item.uid32))
+        self._refresh_manage_table(reports)
         first_report = reports[0]
         self.new_uid_var.set(f"0x{first_report.uid32:08X}")
 
@@ -1996,6 +2550,44 @@ class MotorToolApp:
                 f"manage uid=0x{report.uid32:08X} configured={report.configured} "
                 f"node=0x{report.node_id:02X}"
             )
+
+    def _refresh_manage_table(self, reports: list[ManageReportEvent]) -> None:
+        """
+        @brief 使用发现结果刷新新电机扫描表格。
+        @param reports 管理发现上报列表。
+        @return None
+        """
+        for item_id in self.manage_table.get_children():
+            self.manage_table.delete(item_id)
+
+        for report in reports:
+            uid_text = f"0x{report.uid32:08X}"
+            configured_text = "已配置" if report.configured != 0 else "未配置"
+            node_text = "--" if report.node_id == 0 else f"0x{report.node_id:02X}"
+            self.manage_table.insert("",
+                                     "end",
+                                     iid=str(report.uid32),
+                                     values=(uid_text,
+                                             configured_text,
+                                             node_text))
+
+    def _on_manage_table_select(self, _event: tk.Event) -> None:
+        """
+        @brief 将发现表选中的电机 UID 和节点同步到配置区。
+        @param _event Tk 表格选择事件。
+        @return None
+        """
+        selection = self.manage_table.selection()
+
+        if len(selection) == 0:
+            return
+
+        uid32 = int(selection[0])
+        report = self.manage_reports.get(uid32)
+        self.new_uid_var.set(f"0x{uid32:08X}")
+
+        if report is not None and report.node_id in MOTOR_SCAN_NODE_IDS:
+            self.new_node_var.set(node_label_from_id(report.node_id))
 
     def _send_manage_identify(self) -> None:
         """
@@ -2120,12 +2712,159 @@ class MotorToolApp:
 
             self._send_read_info_for_node(node_id)
             self.node_var.set(node_label_from_id(node_id))
+            self.ota_node_var.set(node_label_from_id(node_id))
             self._append_log(
                 f"tx configure new node=0x{node_id:02X} pole_pairs={pole_pairs} "
                 f"phase_map={phase_map}"
             )
         except Exception as exc:
             messagebox.showerror("配置失败", str(exc))
+
+    def _start_positive_winding_test(self) -> None:
+        """
+        @brief 启动正电流绕组方向测试。
+        @return None
+        """
+        self._start_winding_test(1)
+
+    def _start_negative_winding_test(self) -> None:
+        """
+        @brief 启动负电流绕组方向测试。
+        @return None
+        """
+        self._start_winding_test(-1)
+
+    def _start_winding_test(self, direction: int) -> None:
+        """
+        @brief 配置选定相序并准备限时电流测试。
+        @param direction 测试电流方向，正数为正向，负数为反向。
+        @return None
+        @note 测试电流绝对值限制为 3000，持续时间限制为 50~500ms。
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        if self.winding_test_active:
+            messagebox.showwarning("正在测试", "请等待当前绕组测试结束")
+            return
+
+        try:
+            node_id = self._selected_new_node_id()
+            phase_map = phase_map_from_text(self.new_phase_map_var.get())
+            current = abs(parse_int_auto(self.winding_current_var.get()))
+            duration_ms = parse_int_auto(self.winding_duration_var.get())
+
+            if current < 1 or current > 3000:
+                raise ValueError("测试电流控制量必须为 1~3000")
+
+            if duration_ms < 50 or duration_ms > 500:
+                raise ValueError("测试持续时间必须为 50~500ms")
+
+            self.client.send_foc_config(node_id,
+                                        MOTOR_FOC_PARAM_PHASE_MAP,
+                                        phase_map)
+            self._record_tx(node_id)
+            self.client.send_simple_command(node_id, MOTOR_CMD_ZERO_CALIBRATION)
+            self._record_tx(node_id)
+            self.client.send_report_config(node_id, True, 2)
+            self._record_tx(node_id)
+        except Exception as exc:
+            messagebox.showerror("测试失败", str(exc))
+            return
+
+        self.winding_test_active = True
+        self.winding_test_node_id = node_id
+        self.winding_test_direction = 1 if direction >= 0 else -1
+        self.winding_test_current = current
+        self.winding_test_duration_ms = duration_ms
+        self.winding_result_var.set("准备测试...")
+        self.root.after(120, self._apply_winding_test_current)
+
+    def _apply_winding_test_current(self) -> None:
+        """
+        @brief 记录起始角度并施加绕组测试电流。
+        @return None
+        """
+        if not self.winding_test_active or not self.connected:
+            self.winding_test_active = False
+            return
+
+        node_id = self.winding_test_node_id
+        state = self.motor_states.get(node_id)
+        self.winding_test_start_position = None
+
+        if state is not None:
+            self.winding_test_start_position = state.position_mrad
+
+        try:
+            self.client.send_run_mode(node_id, True, MOTOR_MODES["current"])
+            self._record_tx(node_id)
+            self.client.send_current_target(
+                node_id,
+                self.winding_test_direction * self.winding_test_current,
+            )
+            self._record_tx(node_id)
+        except Exception as exc:
+            self.winding_test_active = False
+            self.winding_result_var.set(f"测试失败: {exc}")
+            return
+
+        direction_text = "正向" if self.winding_test_direction > 0 else "反向"
+        self.winding_result_var.set(f"正在进行{direction_text}测试")
+        self.root.after(self.winding_test_duration_ms, self._finish_winding_test)
+
+    def _finish_winding_test(self) -> None:
+        """
+        @brief 停止绕组测试并根据机械角度变化显示结果。
+        @return None
+        """
+        node_id = self.winding_test_node_id
+
+        try:
+            if self.connected:
+                self.client.send_stop_output(node_id)
+                self._record_tx(node_id)
+
+                if self.new_report_off_var.get():
+                    self.client.send_report_config(node_id, False, 10)
+                    self._record_tx(node_id)
+        except Exception as exc:
+            self.winding_result_var.set(f"停止失败: {exc}")
+            self.winding_test_active = False
+            return
+
+        state = self.motor_states.get(node_id)
+        end_position = None if state is None else state.position_mrad
+        start_position = self.winding_test_start_position
+        self.winding_test_active = False
+
+        if start_position is None or end_position is None:
+            self.winding_result_var.set("无角度上报，无法判断")
+            return
+
+        delta_mrad = end_position - start_position
+
+        while delta_mrad > int(math.pi * 1000.0):
+            delta_mrad -= int(2.0 * math.pi * 1000.0)
+
+        while delta_mrad < -int(math.pi * 1000.0):
+            delta_mrad += int(2.0 * math.pi * 1000.0)
+
+        expected_sign = self.winding_test_direction
+
+        if abs(delta_mrad) < 20:
+            result_text = "位移过小，请检查接线或增大测试电流"
+        elif delta_mrad * expected_sign > 0:
+            result_text = "方向一致"
+        else:
+            result_text = "方向相反，请切换相序"
+
+        self.winding_result_var.set(f"{result_text}，位移 {delta_mrad} mrad")
+        self._append_log(
+            f"winding test node=0x{node_id:02X} delta={delta_mrad}mrad "
+            f"result={result_text}"
+        )
 
     def _send_read_foc_selected(self) -> None:
         """
@@ -2146,6 +2885,63 @@ class MotorToolApp:
             self._append_log(f"tx node=0x{node_id:02X} read foc")
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
+
+    def _read_foc_group(self) -> None:
+        """
+        @brief 读取当前电机全部可配置 FOC 参数。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        try:
+            node_id = self._selected_node_id()
+
+            for param_id in self.foc_parameter_vars:
+                self.client.send_read_foc_config(node_id, param_id)
+                self._record_tx(node_id)
+                time.sleep(0.002)
+
+            self._append_log(f"tx node=0x{node_id:02X} read all foc")
+        except Exception as exc:
+            messagebox.showerror("读取失败", str(exc))
+
+    def _write_foc_group(self) -> None:
+        """
+        @brief 写入当前电机全部可配置 FOC 参数。
+        @return None
+        """
+        if not self.connected:
+            messagebox.showwarning("未连接", "请先连接 PCAN")
+            return
+
+        try:
+            node_id = self._selected_node_id()
+            values: dict[int, int] = {}
+
+            for param_id, parameter_var in self.foc_parameter_vars.items():
+                if param_id == MOTOR_FOC_PARAM_PHASE_MAP:
+                    value = phase_map_from_text(parameter_var.get())
+                else:
+                    value = parse_int_auto(parameter_var.get())
+
+                if value < 0 or value > 0xFFFFFFFF:
+                    raise ValueError("FOC 参数必须在 0~4294967295 范围内")
+
+                values[param_id] = value
+
+            if values[MOTOR_FOC_PARAM_POLE_PAIRS] < 1:
+                raise ValueError("极对数必须大于 0")
+
+            for param_id, value in values.items():
+                self.client.send_foc_config(node_id, param_id, value)
+                self._record_tx(node_id)
+                time.sleep(0.004)
+
+            self._append_log(f"tx node=0x{node_id:02X} write all foc")
+        except Exception as exc:
+            messagebox.showerror("写入失败", str(exc))
 
     def _send_run_mode(self) -> None:
         """
@@ -2201,16 +2997,21 @@ class MotorToolApp:
 
     def _send_stop_all(self) -> None:
         """
-        @brief 停止 0x01~0x08 节点电机输出。
+        @brief 停止当前已发现的全部在线电机输出。
         @return None
         """
         try:
-            for node_id in MOTOR_NODE_IDS:
+            node_ids = sorted(self.motor_states.keys(), reverse=True)
+
+            if len(node_ids) == 0:
+                raise ValueError("当前没有已发现的在线电机")
+
+            for node_id in node_ids:
                 self.client.send_stop_output(node_id)
                 self._record_tx(node_id)
                 time.sleep(0.002)
 
-            self._append_log("tx stop_output nodes 0x01~0x08")
+            self._append_log("tx stop_output all online nodes")
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
 
@@ -2280,15 +3081,20 @@ class MotorToolApp:
 
     def _send_read_all(self) -> None:
         """
-        @brief 请求读取 0x01~0x08 节点电机常用信息。
+        @brief 请求读取全部已发现电机的常用信息。
         @return None
         """
         try:
-            for node_id in MOTOR_NODE_IDS:
+            node_ids = sorted(self.motor_states.keys(), reverse=True)
+
+            if len(node_ids) == 0:
+                raise ValueError("请先扫描在线电机")
+
+            for node_id in node_ids:
                 self._send_read_info_for_node(node_id)
                 time.sleep(0.004)
 
-            self._append_log("tx read nodes 0x01~0x08")
+            self._append_log("tx read all online nodes")
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
 
@@ -2365,6 +3171,12 @@ class MotorToolApp:
 
             if isinstance(event, ErrorEvent):
                 self._append_log(f"ERROR: {event.message}")
+
+            if isinstance(event, OtaLogEvent):
+                self._append_log(event.message)
+
+            if isinstance(event, OtaFinishedEvent):
+                self._handle_ota_finished(event)
 
         self.root.after(20, self._process_events)
 
@@ -2471,7 +3283,8 @@ class MotorToolApp:
 
         if event.status == 0:
             self._update_state_from_ack(state, event)
-            self._update_pid_window_from_ack(event)
+            self._update_pid_fields_from_ack(event)
+            self._update_foc_fields_from_ack(event)
 
         if event.command == MOTOR_CMD_FOC_TRACE:
             self._handle_foc_trace_ack(event)
@@ -2516,15 +3329,12 @@ class MotorToolApp:
                 self.trace_sample_hz = sample_hz
                 self.record_status_var.set(f"读取高速数据: 0/{sample_count}")
 
-    def _update_pid_window_from_ack(self, event: MotorAckEvent) -> None:
+    def _update_pid_fields_from_ack(self, event: MotorAckEvent) -> None:
         """
-        @brief 根据 PID 成功应答回填配置窗口。
+        @brief 根据 PID 成功应答回填调试页内嵌参数。
         @param event 电机应答事件。
         @return None
         """
-        if self.pid_window is None or not self.pid_window.winfo_exists():
-            return
-
         try:
             selected_node_id = self._selected_node_id()
         except ValueError:
@@ -2549,6 +3359,39 @@ class MotorToolApp:
 
         value = float32_from_le(event.payload[3:7])
         parameter_vars[param_id].set(self._format_pid_value(value))
+
+    def _update_foc_fields_from_ack(self, event: MotorAckEvent) -> None:
+        """
+        @brief 根据 FOC 成功应答回填调试页参数。
+        @param event 电机应答事件。
+        @return None
+        """
+        if event.command not in (MOTOR_CMD_SET_FOC_CONFIG,
+                                 MOTOR_CMD_READ_FOC_CONFIG):
+            return
+
+        if len(event.payload) < 7:
+            return
+
+        try:
+            selected_node_id = self._selected_node_id()
+        except ValueError:
+            return
+
+        if event.node_id != selected_node_id:
+            return
+
+        param_id = event.payload[2]
+
+        if param_id not in self.foc_parameter_vars:
+            return
+
+        value = uint32_from_le(event.payload[3:7])
+
+        if param_id == MOTOR_FOC_PARAM_PHASE_MAP:
+            self.foc_parameter_vars[param_id].set(phase_map_text(value))
+        else:
+            self.foc_parameter_vars[param_id].set(str(value))
 
     def _format_pid_value(self, value: float) -> str:
         """
@@ -2682,9 +3525,12 @@ class MotorToolApp:
         """
         current_ms = now_monotonic_ms()
 
-        for node_id in sorted(self.motor_states.keys()):
+        ordered_node_ids = sorted(self.motor_states.keys(), reverse=True)
+
+        for item_index, node_id in enumerate(ordered_node_ids):
             state = self.motor_states[node_id]
             self._ensure_table_item(node_id)
+            self.motor_table.move(str(node_id), "", item_index)
 
             if state.last_report_ms is None:
                 age_text = "--"
@@ -2827,7 +3673,7 @@ class MotorToolApp:
         canvas.create_rectangle(0, 0, width, height, fill="#111827", outline="")
         canvas.create_text(left,
                            8,
-                           text=f"{motor_name} position/speed {window_ms / 1000.0:g}s",
+                           text=f"{motor_name}  时间窗口 {window_ms / 1000.0:g} s",
                            fill="#e5e7eb",
                            anchor="nw")
 
@@ -2851,6 +3697,7 @@ class MotorToolApp:
         self._draw_chart_series(canvas,
                                 draw_history,
                                 value_index=1,
+                                unit="mrad",
                                 color="#38bdf8",
                                 left=left,
                                 right=right,
@@ -2859,6 +3706,7 @@ class MotorToolApp:
         self._draw_chart_series(canvas,
                                 draw_history,
                                 value_index=2,
+                                unit="mrad/s",
                                 color="#f97316",
                                 left=left,
                                 right=right,
@@ -2868,12 +3716,12 @@ class MotorToolApp:
         last_sample = recent_history[-1]
         canvas.create_text(8,
                            top,
-                           text=f"pos\n{last_sample[1]}",
+                           text=f"位置\n{last_sample[1]}\nmrad",
                            fill="#38bdf8",
                            anchor="nw")
         canvas.create_text(8,
                            mid_y + 8,
-                           text=f"spd\n{last_sample[2]}",
+                           text=f"速度\n{last_sample[2]}\nmrad/s",
                            fill="#f97316",
                            anchor="nw")
 
@@ -2906,6 +3754,7 @@ class MotorToolApp:
                            canvas: tk.Canvas,
                            history: list[tuple[int, int, int]],
                            value_index: int,
+                           unit: str,
                            color: str,
                            left: int,
                            right: int,
@@ -2916,6 +3765,7 @@ class MotorToolApp:
         @param canvas 目标画布。
         @param history 曲线历史数据。
         @param value_index 数值字段下标。
+        @param unit 曲线数值单位。
         @param color 曲线颜色。
         @param left 绘图区左边界。
         @param right 绘图区右边界。
@@ -2942,12 +3792,12 @@ class MotorToolApp:
 
         canvas.create_text(right,
                            top,
-                           text=str(max_value),
+                           text=f"{max_value} {unit}",
                            fill=color,
                            anchor="ne")
         canvas.create_text(right,
                            bottom,
-                           text=str(min_value),
+                           text=f"{min_value} {unit}",
                            fill=color,
                            anchor="se")
 
@@ -2982,6 +3832,10 @@ class MotorToolApp:
         @brief 处理窗口关闭事件。
         @return None
         """
+        if self.ota_running:
+            messagebox.showwarning("OTA 进行中", "请等待 OTA 完成后再关闭上位机")
+            return
+
         self.client.disconnect()
         self.root.destroy()
 

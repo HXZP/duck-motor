@@ -208,38 +208,6 @@ static void foc_config_map_phase_output(uint16_t a,
             break;
         }
 
-        case 2u:
-        {
-            *ch1 = b;
-            *ch2 = a;
-            *ch3 = c;
-            break;
-        }
-
-        case 3u:
-        {
-            *ch1 = b;
-            *ch2 = c;
-            *ch3 = a;
-            break;
-        }
-
-        case 4u:
-        {
-            *ch1 = c;
-            *ch2 = a;
-            *ch3 = b;
-            break;
-        }
-
-        case 5u:
-        {
-            *ch1 = c;
-            *ch2 = b;
-            *ch3 = a;
-            break;
-        }
-
         case 0u:
         default:
         {
