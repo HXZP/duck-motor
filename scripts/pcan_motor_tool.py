@@ -45,6 +45,7 @@ PCAN_MESSAGE_STANDARD = 0x00
 MOTOR_HOST_CMD_BASE = 0x100
 MOTOR_ACK_BASE = 0x180
 MOTOR_REPORT_BASE = 0x200
+MOTOR_ERROR_REPORT_BASE = 0x280
 MOTOR_PID_DEBUG_STATE_BASE = 0x300
 MOTOR_PID_DEBUG_ERROR_BASE = 0x320
 MOTOR_PID_DEBUG_INTEGRAL_BASE = 0x340
@@ -108,6 +109,24 @@ MOTOR_STATUS_TEXT = {
     0x02: "INVALID_PARAM",
     0x03: "INVALID_MODE",
     0x04: "CAN_ERROR",
+    0x05: "FOC_UNAVAILABLE",
+}
+
+MOTOR_ERROR_BITS = {
+    0: "硬件 I2C 初始化失败",
+    1: "AS5600 状态寄存器读取失败",
+    2: "AS5600 配置读取失败",
+    3: "AS5600 配置写入失败",
+    4: "AS5600 配置校验失败",
+    5: "AS5600 磁场过强（告警）",
+    6: "AS5600 磁场过弱（告警）",
+    7: "AS5600 未检测到磁铁",
+    8: "AS5600 磁场状态读取失败",
+    9: "AS5600 连续读取指针设置失败",
+    10: "AS5600 运行时读取失败",
+    11: "CAN 过滤器或启动配置失败",
+    12: "FOC 线程创建失败",
+    13: "CAN 线程创建失败",
 }
 
 MOTOR_COMMAND_TEXT = {
@@ -227,6 +246,8 @@ class MotorState:
     zero_mrad: int | None = None
     pole_pairs: int | None = None
     phase_map: int | None = None
+    error_active: int = 0
+    error_latched: int = 0
 
 
 @dataclass
@@ -236,6 +257,16 @@ class MotorReportEvent:
     node_id: int
     position_mrad: int
     speed_mrad_s: int
+    timestamp_ms: int
+
+
+@dataclass
+class MotorErrorEvent:
+    """@brief 电机错误位图上报事件。"""
+
+    node_id: int
+    active_bits: int
+    latched_bits: int
     timestamp_ms: int
 
 
@@ -543,6 +574,42 @@ def status_text(status: int | None) -> str:
         return "--"
 
     return MOTOR_STATUS_TEXT.get(status, f"0x{status:02X}")
+
+
+def motor_error_bits_text(error_bits: int) -> str:
+    """
+    @brief 将电机错误位图转换为可读文本。
+    @param error_bits 32 位错误位图。
+    @return str 错误说明，多个错误使用中文顿号分隔。
+    """
+    if error_bits == 0:
+        return "无"
+
+    names = [
+        name
+        for bit_index, name in MOTOR_ERROR_BITS.items()
+        if (error_bits & (1 << bit_index)) != 0
+    ]
+    known_mask = sum(1 << bit_index for bit_index in MOTOR_ERROR_BITS)
+    unknown_bits = error_bits & ~known_mask
+
+    if unknown_bits != 0:
+        names.append(f"未知错误位 0x{unknown_bits:08X}")
+
+    return "、".join(names)
+
+
+def motor_error_summary(active_bits: int, latched_bits: int) -> str:
+    """
+    @brief 格式化当前错误与本次上电历史错误位图。
+    @param active_bits 当前仍存在的错误位图。
+    @param latched_bits 本次上电锁存的历史错误位图。
+    @return str 错误位图摘要。
+    """
+    if active_bits == 0 and latched_bits == 0:
+        return "--"
+
+    return f"0x{active_bits:08X}/0x{latched_bits:08X}"
 
 
 def report_config_text(enabled: bool | None, period_ms: int | None) -> str:
@@ -1068,6 +1135,19 @@ class PcanClient:
 
             return
 
+        if message.ID in range(MOTOR_ERROR_REPORT_BASE + 1,
+                               MOTOR_ERROR_REPORT_BASE + 0x80):
+            if len(data) >= 8:
+                event = MotorErrorEvent(
+                    node_id=message.ID - MOTOR_ERROR_REPORT_BASE,
+                    active_bits=uint32_from_le(data[0:4]),
+                    latched_bits=uint32_from_le(data[4:8]),
+                    timestamp_ms=now_monotonic_ms(),
+                )
+                self.event_queue.put(event)
+
+            return
+
         debug_ranges = (
             (MOTOR_PID_DEBUG_STATE_BASE, "state"),
             (MOTOR_PID_DEBUG_ERROR_BASE, "error"),
@@ -1205,6 +1285,7 @@ class MotorToolApp:
         self.record_status_var = tk.StringVar(value="未记录")
         self.connected = False
         self.manage_reports: dict[int, ManageReportEvent] = {}
+        self.motor_error_states: dict[int, tuple[int, int]] = {}
         self.manage_listen_active = False
         self.pending_new_config: tuple[int, int, int, int] | None = None
         self.chart_history: dict[int, deque[tuple[int, int, int]]] = {}
@@ -1274,34 +1355,35 @@ class MotorToolApp:
         @return None
         """
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
-        parent.rowconfigure(3, weight=1)
+        parent.rowconfigure(2, weight=1)
 
         self._build_motor_table(parent)
-        self._build_control_panel(parent)
 
         parameter_frame = ttk.Frame(parent)
-        parameter_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        parameter_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         parameter_frame.columnconfigure(0, weight=1)
         parameter_frame.columnconfigure(1, weight=1)
 
         pid_frame = ttk.Frame(parameter_frame)
         pid_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         pid_frame.columnconfigure(0, weight=1)
-        self._build_pid_group(pid_frame,
-                              0,
-                              "速度环 PID",
-                              self.speed_pid_vars,
-                              MOTOR_CMD_SET_SPEED_PID_PARAM,
-                              MOTOR_CMD_READ_SPEED_PID_PARAM)
+        self._build_control_panel(pid_frame)
         self._build_pid_group(pid_frame,
                               1,
+                              "速度环 PID",
+                              self.speed_pid_vars,
+                              MOTOR_CMD_SET_SPEED_PID_PARAM)
+        self._build_pid_group(pid_frame,
+                              2,
                               "位置环 PID",
                               self.position_pid_vars,
-                              MOTOR_CMD_SET_POSITION_PID_PARAM,
-                              MOTOR_CMD_READ_POSITION_PID_PARAM)
+                              MOTOR_CMD_SET_POSITION_PID_PARAM)
 
-        self._build_foc_group(parameter_frame)
+        device_frame = ttk.Frame(parameter_frame)
+        device_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        device_frame.columnconfigure(0, weight=1)
+        self._build_device_panel(device_frame)
+        self._build_foc_group(device_frame)
         self._build_chart_panel(parent)
 
     def _build_motor_table(self, parent: ttk.Frame) -> None:
@@ -1312,8 +1394,30 @@ class MotorToolApp:
         """
         table_frame = ttk.LabelFrame(parent, text="在线电机", padding=8)
         table_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
-        table_frame.rowconfigure(0, weight=1)
+        table_frame.rowconfigure(1, weight=1)
         table_frame.columnconfigure(0, weight=1)
+
+        table_toolbar = ttk.Frame(table_frame)
+        table_toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        table_toolbar.columnconfigure(6, weight=1)
+        ttk.Label(table_toolbar, text="当前电机").grid(row=0,
+                                                       column=0,
+                                                       padx=(0, 4))
+        self.node_combo = ttk.Combobox(table_toolbar,
+                                       textvariable=self.node_var,
+                                       values=(),
+                                       width=8)
+        self.node_combo.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(table_toolbar,
+                   text="扫描在线电机",
+                   command=self._scan_online_motors).grid(row=0,
+                                                          column=2,
+                                                          padx=(0, 8))
+        ttk.Button(table_toolbar,
+                   text="读取全部",
+                   command=self._send_read_all).grid(row=0,
+                                                     column=3,
+                                                     padx=(0, 8))
 
         columns = (
             "node",
@@ -1326,6 +1430,7 @@ class MotorToolApp:
             "zero",
             "foc",
             "report_cfg",
+            "error",
             "ack",
             "tx",
         )
@@ -1344,6 +1449,7 @@ class MotorToolApp:
         self.motor_table.heading("zero", text="零点 mrad")
         self.motor_table.heading("foc", text="FOC")
         self.motor_table.heading("report_cfg", text="上报配置")
+        self.motor_table.heading("error", text="错误 当前/历史")
         self.motor_table.heading("ack", text="最后应答")
         self.motor_table.heading("tx", text="发送")
 
@@ -1358,13 +1464,14 @@ class MotorToolApp:
         self.motor_table.column("zero", width=100, anchor="e")
         self.motor_table.column("foc", width=110, anchor="center")
         self.motor_table.column("report_cfg", width=130, anchor="center")
+        self.motor_table.column("error", width=190, anchor="center")
         self.motor_table.column("ack", width=150, anchor="center")
         self.motor_table.column("tx", width=70, anchor="e")
-        self.motor_table.grid(row=0, column=0, sticky="nsew")
+        self.motor_table.grid(row=1, column=0, sticky="nsew")
         table_scrollbar = ttk.Scrollbar(table_frame,
                                         orient="vertical",
                                         command=self.motor_table.yview)
-        table_scrollbar.grid(row=0, column=1, sticky="ns")
+        table_scrollbar.grid(row=1, column=1, sticky="ns")
         self.motor_table.configure(yscrollcommand=table_scrollbar.set)
         self.motor_table.bind("<<TreeviewSelect>>", self._on_motor_table_select)
 
@@ -1375,119 +1482,89 @@ class MotorToolApp:
         @return None
         """
         control_frame = ttk.LabelFrame(parent, text="运行控制", padding=8)
-        control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        control_frame.columnconfigure(14, weight=1)
+        control_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        control_frame.columnconfigure(10, weight=1)
 
-        ttk.Label(control_frame, text="电机").grid(row=0, column=0, padx=(0, 4))
-        self.node_combo = ttk.Combobox(control_frame,
-                                       textvariable=self.node_var,
-                                       values=(),
-                                       width=8)
-        self.node_combo.grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(control_frame,
-                   text="扫描在线电机",
-                   command=self._scan_online_motors).grid(row=0,
-                                                          column=2,
-                                                          padx=(0, 8))
         ttk.Checkbutton(control_frame,
                         text="使能",
-                        variable=self.enable_var).grid(row=0, column=3, padx=(0, 8))
-        ttk.Label(control_frame, text="模式").grid(row=0, column=4, padx=(0, 4))
+                        variable=self.enable_var).grid(row=0, column=0, padx=(0, 8))
+        ttk.Label(control_frame, text="模式").grid(row=0, column=1, padx=(0, 4))
         mode_combo = ttk.Combobox(control_frame,
                                   textvariable=self.mode_var,
                                   values=list(MOTOR_MODES.keys()),
                                   width=10,
                                   state="readonly")
-        mode_combo.grid(row=0, column=5, padx=(0, 8))
+        mode_combo.grid(row=0, column=2, padx=(0, 8))
         mode_combo.bind("<<ComboboxSelected>>", self._update_target_unit)
         ttk.Button(control_frame,
                    text="设置模式",
-                   command=self._send_run_mode).grid(row=0, column=6, padx=(0, 8))
+                   command=self._send_run_mode).grid(row=0, column=3, padx=(0, 8))
 
-        ttk.Label(control_frame, text="目标").grid(row=0, column=7, padx=(0, 4))
+        ttk.Label(control_frame, text="目标").grid(row=0, column=4, padx=(0, 4))
         ttk.Entry(control_frame,
                   textvariable=self.target_var,
-                  width=12).grid(row=0, column=8, padx=(0, 4))
+                  width=12).grid(row=0, column=5, padx=(0, 4))
         ttk.Label(control_frame,
                   textvariable=self.target_unit_var).grid(row=0,
-                                                          column=9,
+                                                          column=6,
                                                           padx=(0, 8))
         ttk.Button(control_frame,
                    text="发送目标",
-                   command=self._send_target_by_mode).grid(row=0, column=10, padx=(0, 8))
+                   command=self._send_target_by_mode).grid(row=0, column=7, padx=(0, 8))
         ttk.Button(control_frame,
                    text="停止当前",
-                   command=self._send_stop_selected).grid(row=0, column=11, padx=(0, 8))
+                   command=self._send_stop_selected).grid(row=0, column=8, padx=(0, 8))
         ttk.Button(control_frame,
                    text="停止全部",
-                   command=self._send_stop_all).grid(row=0, column=12, padx=(0, 8))
+                   command=self._send_stop_all).grid(row=0, column=9, padx=(0, 8))
 
-        ttk.Label(control_frame, text="上报 Hz").grid(row=1, column=0, padx=(0, 4), pady=(8, 0))
-        ttk.Entry(control_frame,
+    def _build_device_panel(self, parent: ttk.Frame) -> None:
+        """
+        @brief 创建上报、校准和诊断操作面板。
+        @param parent 电机配置面板父级容器。
+        @return None
+        """
+        device_panel = ttk.LabelFrame(parent, text="电机配置", padding=8)
+        device_panel.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        device_panel.columnconfigure(6, weight=1)
+
+        ttk.Label(device_panel, text="上报频率").grid(row=0,
+                                                      column=0,
+                                                      padx=(0, 4))
+        ttk.Entry(device_panel,
                   textvariable=self.report_hz_var,
-                  width=12).grid(row=1, column=1, padx=(0, 8), pady=(8, 0))
-        ttk.Checkbutton(control_frame,
+                  width=10).grid(row=0, column=1, padx=(0, 4))
+        ttk.Label(device_panel, text="Hz").grid(row=0, column=2, padx=(0, 8))
+        ttk.Checkbutton(device_panel,
                         text="开启上报",
-                        variable=self.report_enable_var).grid(row=1,
-                                                             column=2,
-                                                             padx=(0, 8),
-                                                             pady=(8, 0))
-        ttk.Button(control_frame,
+                        variable=self.report_enable_var).grid(row=0,
+                                                             column=3,
+                                                             padx=(0, 8))
+        ttk.Button(device_panel,
                    text="设置上报",
-                   command=self._send_report_config).grid(row=1,
-                                                        column=3,
-                                                        padx=(0, 8),
-                                                        pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取上报",
-                   command=self._send_read_report).grid(row=1,
-                                                      column=4,
-                                                      padx=(0, 8),
-                                                      pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取版本",
-                   command=self._send_read_version).grid(row=1,
-                                                       column=5,
-                                                       padx=(0, 8),
-                                                       pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取节点",
-                   command=self._send_read_node).grid(row=1,
-                                                    column=6,
-                                                    padx=(0, 8),
-                                                    pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取当前",
-                   command=self._send_read_selected).grid(row=1,
-                                                       column=7,
-                                                       padx=(0, 8),
-                                                       pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取全部",
-                   command=self._send_read_all).grid(row=1,
-                                                   column=8,
-                                                   padx=(0, 8),
-                                                   pady=(8, 0))
-        ttk.Button(control_frame,
+                   command=self._send_report_config).grid(row=0,
+                                                          column=4,
+                                                          padx=(0, 8))
+        ttk.Button(device_panel,
                    text="零点校准",
                    command=self._send_zero_calibration).grid(row=1,
-                                                           column=9,
-                                                           padx=(0, 8),
-                                                           pady=(8, 0))
-        ttk.Button(control_frame,
-                   text="读取零点",
-                   command=self._send_read_zero).grid(row=1,
-                                                    column=10,
-                                                    padx=(0, 8),
-                                                    pady=(8, 0))
-        self.record_button = ttk.Button(control_frame,
+                                                             column=0,
+                                                             pady=(8, 0),
+                                                             sticky="w")
+        self.record_button = ttk.Button(device_panel,
                                         text="开始记录",
                                         command=self._toggle_recording)
-        self.record_button.grid(row=0, column=13, padx=(0, 8))
-        ttk.Label(control_frame,
-                  textvariable=self.record_status_var).grid(row=0,
-                                                            column=14,
-                                                            padx=(0, 8),
+        self.record_button.grid(row=1,
+                                column=1,
+                                columnspan=2,
+                                padx=(8, 8),
+                                pady=(8, 0),
+                                sticky="w")
+        ttk.Label(device_panel,
+                  textvariable=self.record_status_var).grid(row=1,
+                                                            column=3,
+                                                            columnspan=4,
+                                                            pady=(8, 0),
                                                             sticky="w")
 
     def _toggle_recording(self) -> None:
@@ -1623,8 +1700,7 @@ class MotorToolApp:
                          row: int,
                          title: str,
                          parameter_vars: dict[int, tk.StringVar],
-                         set_command: int,
-                         read_command: int) -> None:
+                         set_command: int) -> None:
         """
         @brief 创建一组 PID 参数编辑控件。
         @param parent 父级界面容器。
@@ -1632,7 +1708,6 @@ class MotorToolApp:
         @param title 参数组标题。
         @param parameter_vars 参数编号到输入变量的映射。
         @param set_command 参数写入命令码。
-        @param read_command 参数读取命令码。
         @return None
         """
         group_frame = ttk.LabelFrame(parent, text=title, padding=10)
@@ -1656,16 +1731,11 @@ class MotorToolApp:
                                      pady=(4, 0))
 
         ttk.Button(group_frame,
-                   text="读取",
-                   command=lambda: self._read_pid_group(read_command)).grid(row=1,
-                                                                           column=5,
-                                                                           padx=(4, 8),
-                                                                           pady=(4, 0))
-        ttk.Button(group_frame,
                    text="写入",
                    command=lambda: self._write_pid_group(set_command,
                                                          parameter_vars)).grid(row=1,
-                                                                              column=6,
+                                                                              column=5,
+                                                                              padx=(4, 0),
                                                                               pady=(4, 0))
 
     def _build_foc_group(self, parent: ttk.Frame) -> None:
@@ -1675,7 +1745,7 @@ class MotorToolApp:
         @return None
         """
         group_frame = ttk.LabelFrame(parent, text="FOC 参数", padding=10)
-        group_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        group_frame.grid(row=1, column=0, sticky="nsew")
 
         parameter_items = (
             ("极对数", "对", MOTOR_FOC_PARAM_POLE_PAIRS),
@@ -1715,42 +1785,12 @@ class MotorToolApp:
                                             pady=(0, 4),
                                             sticky="w")
         ttk.Button(group_frame,
-                   text="读取全部",
-                   command=self._read_foc_group).grid(row=5,
-                                                      column=0,
-                                                      pady=(4, 0),
-                                                      sticky="w")
-        ttk.Button(group_frame,
                    text="写入全部",
                    command=self._write_foc_group).grid(row=5,
-                                                       column=1,
-                                                       padx=(8, 0),
+                                                       column=0,
+                                                       columnspan=2,
                                                        pady=(4, 0),
                                                        sticky="w")
-
-    def _read_pid_group(self, command: int) -> None:
-        """
-        @brief 读取当前电机的一组 PID 参数。
-        @param command PID 参数读取命令码。
-        @return None
-        """
-        if not self.connected:
-            messagebox.showwarning("未连接", "请先连接 PCAN")
-            return
-
-        try:
-            node_id = self._selected_node_id()
-
-            for _param_name, param_id in MOTOR_PID_PARAMETERS:
-                self.client.send_read_pid_param(node_id, command, param_id)
-                self._record_tx(node_id)
-                time.sleep(0.002)
-
-            self._append_log(
-                f"tx node=0x{node_id:02X} {command_text(command)} all"
-            )
-        except Exception as exc:
-            messagebox.showerror("读取失败", str(exc))
 
     def _write_pid_group(self,
                          command: int,
@@ -1934,7 +1974,7 @@ class MotorToolApp:
         @return None
         """
         chart_frame = ttk.LabelFrame(parent, text="当前电机曲线", padding=8)
-        chart_frame.grid(row=3, column=0, sticky="nsew")
+        chart_frame.grid(row=2, column=0, sticky="nsew")
         chart_frame.rowconfigure(1, weight=1)
         chart_frame.columnconfigure(0, weight=1)
 
@@ -2323,6 +2363,7 @@ class MotorToolApp:
             return
 
         self.motor_states.clear()
+        self.motor_error_states.clear()
         self.chart_history.clear()
 
         for item_id in self.motor_table.get_children():
@@ -2461,6 +2502,7 @@ class MotorToolApp:
                                         "--",
                                         "--",
                                         "0",
+                                        "--",
                                         "--",
                                         "--",
                                         "--",
@@ -2866,47 +2908,6 @@ class MotorToolApp:
             f"result={result_text}"
         )
 
-    def _send_read_foc_selected(self) -> None:
-        """
-        @brief 读取当前选中电机的常用 FOC 配置。
-        @return None
-        """
-        if not self.connected:
-            messagebox.showwarning("未连接", "请先连接 PCAN")
-            return
-
-        try:
-            node_id = self._selected_node_id()
-            self.client.send_read_foc_config(node_id, MOTOR_FOC_PARAM_POLE_PAIRS)
-            self._record_tx(node_id)
-            time.sleep(0.002)
-            self.client.send_read_foc_config(node_id, MOTOR_FOC_PARAM_PHASE_MAP)
-            self._record_tx(node_id)
-            self._append_log(f"tx node=0x{node_id:02X} read foc")
-        except Exception as exc:
-            messagebox.showerror("发送失败", str(exc))
-
-    def _read_foc_group(self) -> None:
-        """
-        @brief 读取当前电机全部可配置 FOC 参数。
-        @return None
-        """
-        if not self.connected:
-            messagebox.showwarning("未连接", "请先连接 PCAN")
-            return
-
-        try:
-            node_id = self._selected_node_id()
-
-            for param_id in self.foc_parameter_vars:
-                self.client.send_read_foc_config(node_id, param_id)
-                self._record_tx(node_id)
-                time.sleep(0.002)
-
-            self._append_log(f"tx node=0x{node_id:02X} read all foc")
-        except Exception as exc:
-            messagebox.showerror("读取失败", str(exc))
-
     def _write_foc_group(self) -> None:
         """
         @brief 写入当前电机全部可配置 FOC 参数。
@@ -3032,27 +3033,6 @@ class MotorToolApp:
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
 
-    def _send_read_report(self) -> None:
-        """
-        @brief 请求读取当前选中电机主动上报配置。
-        @return None
-        """
-        self._send_simple_selected(MOTOR_CMD_READ_REPORT_CONFIG)
-
-    def _send_read_version(self) -> None:
-        """
-        @brief 请求读取当前选中电机版本号。
-        @return None
-        """
-        self._send_simple_selected(MOTOR_CMD_READ_APP_VERSION)
-
-    def _send_read_node(self) -> None:
-        """
-        @brief 请求读取当前选中电机节点 ID。
-        @return None
-        """
-        self._send_simple_selected(MOTOR_CMD_READ_NODE_ID)
-
     def _send_zero_calibration(self) -> None:
         """
         @brief 请求当前选中电机执行零点校准并保存。
@@ -3060,28 +3040,9 @@ class MotorToolApp:
         """
         self._send_simple_selected(MOTOR_CMD_ZERO_CALIBRATION)
 
-    def _send_read_zero(self) -> None:
-        """
-        @brief 请求读取当前选中电机零点。
-        @return None
-        """
-        self._send_simple_selected(MOTOR_CMD_READ_ZERO)
-
-    def _send_read_selected(self) -> None:
-        """
-        @brief 请求读取当前选中电机常用信息。
-        @return None
-        """
-        try:
-            node_id = self._selected_node_id()
-            self._send_read_info_for_node(node_id)
-            self._append_log(f"tx node=0x{node_id:02X} read selected")
-        except Exception as exc:
-            messagebox.showerror("发送失败", str(exc))
-
     def _send_read_all(self) -> None:
         """
-        @brief 请求读取全部已发现电机的常用信息。
+        @brief 读取全部在线电机状态及当前电机的全部调试参数。
         @return None
         """
         try:
@@ -3090,11 +3051,32 @@ class MotorToolApp:
             if len(node_ids) == 0:
                 raise ValueError("请先扫描在线电机")
 
+            selected_node_id = self._selected_node_id()
+
+            if selected_node_id not in node_ids:
+                raise ValueError("当前选中节点不在线，请重新选择电机")
+
             for node_id in node_ids:
                 self._send_read_info_for_node(node_id)
                 time.sleep(0.004)
 
-            self._append_log("tx read all online nodes")
+            for command in (MOTOR_CMD_READ_SPEED_PID_PARAM,
+                            MOTOR_CMD_READ_POSITION_PID_PARAM):
+                for _param_name, param_id in MOTOR_PID_PARAMETERS:
+                    self.client.send_read_pid_param(selected_node_id,
+                                                    command,
+                                                    param_id)
+                    self._record_tx(selected_node_id)
+                    time.sleep(0.002)
+
+            for param_id in self.foc_parameter_vars:
+                self.client.send_read_foc_config(selected_node_id, param_id)
+                self._record_tx(selected_node_id)
+                time.sleep(0.002)
+
+            self._append_log(
+                f"tx read all online nodes and parameters node=0x{selected_node_id:02X}"
+            )
         except Exception as exc:
             messagebox.showerror("发送失败", str(exc))
 
@@ -3154,6 +3136,9 @@ class MotorToolApp:
             if isinstance(event, MotorReportEvent):
                 self._handle_motor_report(event)
 
+            if isinstance(event, MotorErrorEvent):
+                self._handle_motor_error(event)
+
             if isinstance(event, PidDebugEvent):
                 self._handle_pid_debug(event)
 
@@ -3192,6 +3177,32 @@ class MotorToolApp:
         state.last_report_ms = event.timestamp_ms
         state.report_count += 1
         self._append_chart_sample(event)
+
+    def _handle_motor_error(self, event: MotorErrorEvent) -> None:
+        """
+        @brief 处理电机错误位图上报并在变化时记录详情。
+        @param event 电机错误位图事件。
+        @return None
+        """
+        previous = self.motor_error_states.get(event.node_id)
+        current = (event.active_bits, event.latched_bits)
+        self.motor_error_states[event.node_id] = current
+
+        if event.node_id != MOTOR_MANAGE_NODE_ID:
+            state = self._get_or_create_state(event.node_id)
+            state.error_active = event.active_bits
+            state.error_latched = event.latched_bits
+
+        if previous == current:
+            return
+
+        self._append_log(
+            f"rx node=0x{event.node_id:02X} error "
+            f"active=0x{event.active_bits:08X} "
+            f"[{motor_error_bits_text(event.active_bits)}] "
+            f"latched=0x{event.latched_bits:08X} "
+            f"[{motor_error_bits_text(event.latched_bits)}]"
+        )
 
     def _handle_pid_debug(self, event: PidDebugEvent) -> None:
         """
@@ -3552,6 +3563,8 @@ class MotorToolApp:
                                                           state.phase_map),
                                           report_config_text(state.report_enabled,
                                                              state.report_period_ms),
+                                          motor_error_summary(state.error_active,
+                                                              state.error_latched),
                                           ack,
                                           str(state.tx_count)))
 

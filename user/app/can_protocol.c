@@ -1,5 +1,6 @@
 #include "app/can_protocol.h"
 
+#include "app/app_error.h"
 #include "app/app_light.h"
 #include "app/app_version.h"
 #include "app/as5600.h"
@@ -23,6 +24,7 @@
 #define CAN_PROTOCOL_RESET_CAN_CONFIG_CONFIRM_CODE   0xA5u
 #define CAN_PROTOCOL_RESET_DELAY_MS                  50u
 #define CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS      1000u
+#define CAN_PROTOCOL_ERROR_REPORT_PERIOD_MS          1000u
 #define CAN_PROTOCOL_PID_DEBUG_FRAME_PERIOD_MS       3u
 #define CAN_PROTOCOL_PID_DEBUG_FRAME_COUNT           4u
 #define CAN_PROTOCOL_FOC_TRACE_ACTION_START           0u
@@ -54,6 +56,8 @@ static uint8_t can_protocol_foc_trace_upload_active = 0u;
 static uint16_t can_protocol_foc_trace_upload_index = 0u;
 static uint8_t can_protocol_foc_trace_upload_part = 0u;
 static uint32_t can_protocol_next_unconfigured_log_tick_ms = 0u;
+static uint32_t can_protocol_next_error_report_tick_ms = 0u;
+static uint8_t can_protocol_foc_available = 0u;
 static uint32_t can_protocol_tx_ok_count = 0u;
 static uint32_t can_protocol_tx_fail_count = 0u;
 static uint32_t can_protocol_rx_count = 0u;
@@ -278,6 +282,28 @@ static HAL_StatusTypeDef can_protocol_send_frame(uint16_t std_id, const uint8_t 
     }
 
     return status;
+}
+
+/**
+ * @brief 以错误位图形式发送当前错误和本次上电锁存错误。
+ * @return void
+ */
+static void can_protocol_send_error_report(void)
+{
+    uint8_t report_data[8] = {0};
+    uint32_t latched_bits;
+
+    latched_bits = AppError_GetLatched();
+    if (latched_bits == APP_ERROR_NONE)
+    {
+        return;
+    }
+
+    can_protocol_encode_uint32(&report_data[0], AppError_GetActive());
+    can_protocol_encode_uint32(&report_data[4], latched_bits);
+    can_protocol_send_frame((uint16_t)(CAN_PROTOCOL_ERROR_REPORT_BASE_ID + can_protocol_node_id),
+                            report_data,
+                            CAN_PROTOCOL_FULL_DLC);
 }
 
 /**
@@ -763,16 +789,19 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
 
     if (can_protocol_config_filter_bank(0u, can_protocol_get_manage_command_std_id()) != HAL_OK)
     {
+        AppError_Set(APP_ERROR_CAN_RECONFIGURE);
         return HAL_ERROR;
     }
 
     if (can_protocol_config_filter_bank(1u, can_protocol_get_command_std_id()) != HAL_OK)
     {
+        AppError_Set(APP_ERROR_CAN_RECONFIGURE);
         return HAL_ERROR;
     }
 
     if (can_protocol_config_filter_bank(2u, can_protocol_get_ota_control_std_id()) != HAL_OK)
     {
+        AppError_Set(APP_ERROR_CAN_RECONFIGURE);
         return HAL_ERROR;
     }
 
@@ -782,6 +811,7 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
         printf("CAN notify fail: status=%d err=0x%08lX\r\n",
                (int)status,
                (unsigned long)HAL_CAN_GetError(&hcan));
+        AppError_Set(APP_ERROR_CAN_RECONFIGURE);
         return HAL_ERROR;
     }
 
@@ -792,6 +822,7 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
                (int)status,
                (unsigned long)HAL_CAN_GetError(&hcan),
                (unsigned long)HAL_CAN_GetState(&hcan));
+        AppError_Set(APP_ERROR_CAN_RECONFIGURE);
         return HAL_ERROR;
     }
 
@@ -801,6 +832,7 @@ static HAL_StatusTypeDef can_protocol_apply_filter(void)
            can_protocol_get_ota_control_std_id(),
            (unsigned long)HAL_CAN_GetState(&hcan));
 
+    AppError_Clear(APP_ERROR_CAN_RECONFIGURE);
     return HAL_OK;
 }
 
@@ -1151,7 +1183,15 @@ static void can_protocol_enter_unconfigured_state(void)
     can_protocol_node_id = CAN_PROTOCOL_MANAGE_NODE_ID;
     can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_NO;
     can_protocol_next_unconfigured_log_tick_ms = HAL_GetTick() + CAN_PROTOCOL_UNCONFIGURED_LOG_PERIOD_MS;
-    AppLight_SetMode(APP_LIGHT_MODE_UNCONFIGURED);
+    if (can_protocol_foc_available != 0u)
+    {
+        AppLight_SetMode(APP_LIGHT_MODE_UNCONFIGURED);
+    }
+    else
+    {
+        AppLight_SetMode(APP_LIGHT_MODE_ERROR);
+    }
+
     foc_output_enable(0u);
     foc_set_state(&foc, Foc_Shutdown);
     printf("CAN node unconfigured: manage_id=0x%02X uid=0x%08lX\r\n",
@@ -1169,9 +1209,18 @@ static void can_protocol_enter_configured_state(uint16_t node_id)
     can_protocol_node_id = node_id;
     can_protocol_is_configured = USER_INFO_CAN_CONFIGURED_YES;
     can_protocol_next_unconfigured_log_tick_ms = 0u;
-    AppLight_SetMode(APP_LIGHT_MODE_RUNNING);
-    foc_output_enable(1u);
-    foc_set_state(&foc, Foc_Working);
+    if (can_protocol_foc_available != 0u)
+    {
+        AppLight_SetMode(APP_LIGHT_MODE_RUNNING);
+        foc_output_enable(1u);
+        foc_set_state(&foc, Foc_Working);
+    }
+    else
+    {
+        AppLight_SetMode(APP_LIGHT_MODE_ERROR);
+        foc_output_enable(0u);
+        foc_set_state(&foc, Foc_Shutdown);
+    }
     printf("CAN node configured: node=0x%02X uid=0x%08lX report=%u period=%lu ms\r\n",
            can_protocol_node_id,
            (unsigned long)can_protocol_short_uid,
@@ -1328,13 +1377,15 @@ static void can_protocol_handle_manage_frame(CAN_RxHeaderTypeDef rxframe, const 
 
 /**
  * @brief 初始化 CAN 协议层并配置过滤器。
+ * @param foc_available FOC 可用标志，0 表示不可用，非 0 表示可用。
  * @return void
  */
-void can_protocol_init(void)
+void can_protocol_init(uint8_t foc_available)
 {
     recoder_data data = {0};
     uint32_t now_ms;
 
+    can_protocol_foc_available = foc_available;
     can_protocol_short_uid = ChipUid_GetShortId();
     printf("CAN protocol init: app=%s uid=0x%08lX\r\n",
            AppVersion_GetString(),
@@ -1362,6 +1413,7 @@ void can_protocol_init(void)
 
     now_ms = HAL_GetTick();
     can_protocol_schedule_manage_report(now_ms);
+    can_protocol_next_error_report_tick_ms = now_ms;
     if (can_protocol_apply_filter() != HAL_OK)
     {
         printf("CAN protocol init filter failed\r\n");
@@ -1377,6 +1429,12 @@ void can_protocol_poll(void)
     uint32_t now_ms;
 
     now_ms = HAL_GetTick();
+    if ((int32_t)(now_ms - can_protocol_next_error_report_tick_ms) >= 0)
+    {
+        can_protocol_send_error_report();
+        can_protocol_next_error_report_tick_ms = now_ms + CAN_PROTOCOL_ERROR_REPORT_PERIOD_MS;
+    }
+
     if (can_protocol_is_configured == USER_INFO_CAN_CONFIGURED_YES)
     {
         return;
@@ -1542,6 +1600,22 @@ static void can_protocol_report_speed_pid_debug(void)
 }
 
 /**
+ * @brief 设置 FOC 当前是否可用。
+ * @param foc_available FOC 可用标志，0 表示不可用，非 0 表示可用。
+ * @return void
+ */
+void can_protocol_set_foc_available(uint8_t foc_available)
+{
+    can_protocol_foc_available = foc_available;
+    if (can_protocol_foc_available == 0u)
+    {
+        foc_output_enable(0u);
+        foc_set_state(&foc, Foc_Shutdown);
+        AppLight_SetMode(APP_LIGHT_MODE_ERROR);
+    }
+}
+
+/**
  * @brief 在主循环上下文中处理待执行的 CAN 命令。
  * @return void
  */
@@ -1584,6 +1658,31 @@ int can_protocol_has_pending(void)
     }
 
     return 0;
+}
+
+/**
+ * @brief 判断命令是否依赖可用的 FOC 控制链路。
+ * @param command CAN 命令码。
+ * @return uint8_t 依赖 FOC 返回 1，否则返回 0。
+ */
+static uint8_t can_protocol_command_requires_foc(uint8_t command)
+{
+    switch (command)
+    {
+        case CAN_PROTOCOL_CMD_SET_MODE:
+        case CAN_PROTOCOL_CMD_SET_CURRENT_TARGET:
+        case CAN_PROTOCOL_CMD_SET_SPEED_TARGET:
+        case CAN_PROTOCOL_CMD_SET_POSITION_TARGET:
+        case CAN_PROTOCOL_CMD_ZERO_CALIBRATE:
+        {
+            return 1u;
+        }
+
+        default:
+        {
+            return 0u;
+        }
+    }
 }
 
 /**
@@ -1631,6 +1730,13 @@ void CAN_protocol_analysis(CAN_RxHeaderTypeDef rxframe, uint8_t *rx_data)
     if (rxframe.DLC == 0u)
     {
         can_protocol_send_ack(0u, CAN_PROTOCOL_STATUS_INVALID_PARAM, NULL, 0u);
+        return;
+    }
+
+    if ((can_protocol_foc_available == 0u) &&
+        (can_protocol_command_requires_foc(rx_data[0]) != 0u))
+    {
+        can_protocol_send_ack(rx_data[0], CAN_PROTOCOL_STATUS_FOC_UNAVAILABLE, NULL, 0u);
         return;
     }
 

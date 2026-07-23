@@ -131,6 +131,18 @@ bazelisk run //scripts:flash_full -- --flash-exe "C:\Program Files\SEGGER\JLink_
 
 `flash_full` 默认只擦除 `0x08000000~0x0800FBFF`，保留从 `0x0800FC00` 开始的用户存储区。脚本会同时检查擦除范围和 full bin 写入范围，防止误覆盖用户存储页。
 
+全片擦除会清除 `0x08000000~0x0800FFFF`，包括 Boot、App 和用户存储区：
+
+```powershell
+bazelisk run //scripts:erase_flash
+```
+
+预览全片擦除命令，不实际操作设备：
+
+```powershell
+bazelisk run //scripts:erase_flash -- --list-only
+```
+
 ## PCAN OTA
 
 先构建 release 固件：

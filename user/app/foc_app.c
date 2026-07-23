@@ -1,5 +1,6 @@
 #include "app/foc_app.h"
 
+#include "app/app_error.h"
 #include "app/app_light.h"
 #include "app/can_protocol.h"
 #include "app/flash.h"
@@ -423,6 +424,15 @@ int32_t foc_app_update(void)
     if (sensor_loop_due != 0U)
     {
         foc_sensor_updata(&foc);
+        if (AppError_HasActive(APP_ERROR_AS5600_RUNTIME_READ) != 0u)
+        {
+            foc_current_target = 0;
+            foc_set_target(0, 0, 0);
+            can_protocol_set_foc_available(0u);
+            foc_update_pending_flag = 0U;
+            return 1;
+        }
+
         foc_update_speed_estimate();
     }
 
@@ -554,7 +564,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
     if (htim->Instance == TIM2)
     {
-        AppLight_Poll();
         foc_update_pending_flag = 1U;
     }
 }

@@ -14,7 +14,8 @@ typedef enum
 {
     APP_LIGHT_MODE_UNCONFIGURED = 0, /**< 未配置低待机灯效。 */
     APP_LIGHT_MODE_RUNNING = 1,      /**< 已配置运行灯效。 */
-    APP_LIGHT_MODE_IDENTIFY = 2      /**< 上位机识别灯效。 */
+    APP_LIGHT_MODE_IDENTIFY = 2,     /**< 上位机识别灯效。 */
+    APP_LIGHT_MODE_ERROR = 3         /**< 错误状态 1Hz 灯效。 */
 } app_light_mode_t;
 
 /**

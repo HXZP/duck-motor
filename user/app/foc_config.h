@@ -25,6 +25,12 @@ void foc_config_load_saved(void);
 void foc_config_start_pwm(void);
 
 /**
+ * @brief 初始化功率使能 GPIO 并保持 FOC 输出关闭。
+ * @return void
+ */
+void foc_config_prepare_safe_output(void);
+
+/**
  * @brief 使能或关闭功率输出。
  * @param enable 输出使能标志，0 表示关闭，非 0 表示使能。
  * @return void

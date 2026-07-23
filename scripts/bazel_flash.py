@@ -16,6 +16,7 @@ DEFAULT_DEVICE = "STM32F103C8"
 DEFAULT_ADDRESS = "0x08000000"
 DEFAULT_ERASE_START = DEFAULT_ADDRESS
 DEFAULT_ERASE_END = "0x0800FBFF"
+DEFAULT_FULL_ERASE_END = "0x0800FFFF"
 DEFAULT_PRESERVE_START = "0x0800FC00"
 DEFAULT_JLINK_SPEED_KHZ = "4000"
 DEFAULT_JLINK_PATHS = [
@@ -377,6 +378,33 @@ def build_jlink_lines(
     return lines
 
 
+def build_jlink_erase_lines(
+    device: str,
+    speed: str,
+    erase_start: str,
+    erase_end: str,
+) -> list[str]:
+    """
+    @brief 生成 J-Link Commander 全片擦除命令。
+    @param device J-Link 目标设备型号。
+    @param speed SWD 速率，单位：kHz。
+    @param erase_start 擦除起始地址。
+    @param erase_end 擦除结束地址。
+    @return 返回 J-Link Commander 命令列表。
+    @note 擦除范围包含起始地址和结束地址。
+    """
+    return [
+        "si 1",
+        "speed " + speed,
+        "device " + device,
+        "r",
+        "h",
+        "erase " + erase_start + ", " + erase_end,
+        "r",
+        "qc",
+    ]
+
+
 def print_jlink_script(script_path: Path, lines: list[str]) -> None:
     """
     @brief 打印将要执行的 J-Link Commander 脚本内容。
@@ -443,6 +471,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--flash-exe", default="", help="JLink/JLinkExe 可执行文件路径。")
     parser.add_argument("--list-only", action="store_true", help="只打印 J-Link 脚本，不执行烧录。")
     parser.add_argument("--skip-verify", action="store_true", help="跳过 verifybin 校验。")
+    parser.add_argument("--erase-only", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -454,6 +483,20 @@ def main() -> int:
     args = parse_args()
     workspace_root = get_workspace_root()
     build_dir = ensure_build_dir(workspace_root)
+
+    if args.erase_only:
+        script_path = build_dir / "erase_flash.jlink"
+        lines = build_jlink_erase_lines(
+            args.device,
+            args.speed,
+            DEFAULT_ERASE_START,
+            DEFAULT_FULL_ERASE_END,
+        )
+
+        print("Device : " + args.device)
+        print("Erase  : " + DEFAULT_ERASE_START + " ~ " + DEFAULT_FULL_ERASE_END)
+        print("Warning: boot, app and user storage will all be erased.")
+        return run_jlink_script(script_path, lines, args.flash_exe, args.list_only)
 
     if args.version:
         image_path = resolve_version_image_path(workspace_root, args.version)

@@ -59,12 +59,61 @@ def _bazel_flash_target_impl(ctx):
         ),
     ]
 
+def _bazel_erase_target_impl(ctx):
+    """
+    @brief 生成 Windows 下的 Bazel Flash 全片擦除入口。
+    @param ctx Bazel 规则上下文。
+    @return 返回可执行 bat 启动器。
+    """
+    launcher = ctx.actions.declare_file(ctx.label.name + ".bat")
+    content = "\r\n".join([
+        "@echo off",
+        "setlocal",
+        "set \"WORKSPACE=%BUILD_WORKSPACE_DIRECTORY%\"",
+        "if \"%WORKSPACE%\"==\"\" set \"WORKSPACE=%cd%\"",
+        (
+            "\"" + ctx.attr.python + "\" "
+            + "\"%WORKSPACE%\\scripts\\bazel_flash.py\" "
+            + "--erase-only "
+            + "--device " + ctx.attr.device + " "
+            + "--speed " + ctx.attr.speed + " "
+            + "%*"
+        ),
+        "exit /b %ERRORLEVEL%",
+        "",
+    ])
+
+    ctx.actions.write(
+        output = launcher,
+        content = content,
+        is_executable = True,
+    )
+
+    return [
+        DefaultInfo(
+            executable = launcher,
+            files = depset([launcher]),
+            runfiles = ctx.runfiles(files = ctx.files.data),
+        ),
+    ]
+
 bazel_flash_target = rule(
     implementation = _bazel_flash_target_impl,
     executable = True,
     attrs = {
         "image_name": attr.string(default = "full"),
         "address": attr.string(default = "0x08000000"),
+        "device": attr.string(default = "STM32F103C8"),
+        "speed": attr.string(default = "4000"),
+        "python": attr.string(default = "python"),
+        "data": attr.label_list(allow_files = True),
+    },
+)
+
+bazel_erase_target = rule(
+    implementation = _bazel_erase_target_impl,
+    executable = True,
+    attrs = {
         "device": attr.string(default = "STM32F103C8"),
         "speed": attr.string(default = "4000"),
         "python": attr.string(default = "python"),

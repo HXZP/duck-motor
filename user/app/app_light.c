@@ -11,6 +11,8 @@
 #define APP_LIGHT_RUNNING_SECOND_ON_END_MS      300u    /**< 运行第二段亮灯结束时间，单位：毫秒。 */
 #define APP_LIGHT_RUNNING_THIRD_ON_START_MS     400u    /**< 运行第三段亮灯开始时间，单位：毫秒。 */
 #define APP_LIGHT_RUNNING_THIRD_ON_END_MS       500u    /**< 运行第三段亮灯结束时间，单位：毫秒。 */
+#define APP_LIGHT_ERROR_PERIOD_MS               1000u   /**< 错误灯效周期，单位：毫秒。 */
+#define APP_LIGHT_ERROR_ON_TIME_MS              500u    /**< 错误灯效亮灯时间，单位：毫秒。 */
 #define APP_LIGHT_IDENTIFY_DEFAULT_DURATION_MS  5000u   /**< 识别灯效默认持续时间，单位：毫秒。 */
 #define APP_LIGHT_IDENTIFY_MIN_FREQUENCY_HZ     1u      /**< 识别灯效最低频率，单位：Hz。 */
 #define APP_LIGHT_IDENTIFY_MAX_FREQUENCY_HZ     20u     /**< 识别灯效最高频率，单位：Hz。 */
@@ -85,6 +87,17 @@ static uint8_t app_light_calc_running_enabled(uint32_t elapsed_ms)
 static uint8_t app_light_calc_base_enabled(app_light_mode_t mode, uint32_t elapsed_ms)
 {
     uint32_t phase_ms;
+
+    if (mode == APP_LIGHT_MODE_ERROR)
+    {
+        phase_ms = elapsed_ms % APP_LIGHT_ERROR_PERIOD_MS;
+        if (phase_ms < APP_LIGHT_ERROR_ON_TIME_MS)
+        {
+            return 1u;
+        }
+
+        return 0u;
+    }
 
     if (mode == APP_LIGHT_MODE_RUNNING)
     {

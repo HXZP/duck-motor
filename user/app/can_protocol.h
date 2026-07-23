@@ -16,6 +16,7 @@ extern "C" {
 #define CAN_PROTOCOL_HOST_COMMAND_BASE_ID (0x100u)
 #define CAN_PROTOCOL_MOTOR_ACK_BASE_ID    (0x180u)
 #define CAN_PROTOCOL_MOTOR_REPORT_BASE_ID (0x200u)
+#define CAN_PROTOCOL_ERROR_REPORT_BASE_ID (0x280u)
 #define CAN_PROTOCOL_PID_DEBUG_STATE_BASE_ID  (0x300u)
 #define CAN_PROTOCOL_PID_DEBUG_ERROR_BASE_ID  (0x320u)
 #define CAN_PROTOCOL_PID_DEBUG_INTEGRAL_BASE_ID (0x340u)
@@ -64,7 +65,8 @@ typedef enum
     CAN_PROTOCOL_STATUS_INVALID_CMD = 0x01,
     CAN_PROTOCOL_STATUS_INVALID_PARAM = 0x02,
     CAN_PROTOCOL_STATUS_INVALID_MODE = 0x03,
-    CAN_PROTOCOL_STATUS_CAN_ERROR = 0x04
+    CAN_PROTOCOL_STATUS_CAN_ERROR = 0x04,
+    CAN_PROTOCOL_STATUS_FOC_UNAVAILABLE = 0x05
 } can_protocol_status_e;
 
 /**
@@ -99,9 +101,17 @@ typedef enum
 
 /**
  * @brief 初始化 CAN 协议层并配置过滤器。
+ * @param foc_available FOC 可用标志，0 表示不可用，非 0 表示可用。
  * @return void
  */
-void can_protocol_init(void);
+void can_protocol_init(uint8_t foc_available);
+
+/**
+ * @brief 设置 FOC 当前是否可用。
+ * @param foc_available FOC 可用标志，0 表示不可用，非 0 表示可用。
+ * @return void
+ */
+void can_protocol_set_foc_available(uint8_t foc_available);
 
 /**
  * @brief 轮询 CAN 协议层周期任务。

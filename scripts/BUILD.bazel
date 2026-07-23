@@ -1,5 +1,5 @@
 load("//scripts:clangd_refresh_rules.bzl", "clangd_refresh_target")
-load("//scripts:bazel_flash_rules.bzl", "bazel_flash_target")
+load("//scripts:bazel_flash_rules.bzl", "bazel_erase_target", "bazel_flash_target")
 load("//scripts:pcan_ota_rules.bzl", "pcan_ota_target")
 
 exports_files([
@@ -37,6 +37,13 @@ bazel_flash_target(
         "bazel_flash.py",
     ],
     image_name = "full",
+)
+
+bazel_erase_target(
+    name = "erase_flash",
+    data = [
+        "bazel_flash.py",
+    ],
 )
 
 clangd_refresh_target(

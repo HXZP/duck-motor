@@ -10,6 +10,6 @@
         "--header-insertion=never",
         "--query-driver=C:/Users/13241/.zephyr_ide/toolchains/**/*"
     ],
-    "bazel.executable": "C:\\Users\\13241\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Bazel.Bazelisk_Microsoft.Winget.Source_8wekyb3d8bbwe\\bazelisk.exe",
+    "bazel.executable": "C:\\Users\\13241\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Bazel.Bazel_Microsoft.Winget.Source_8wekyb3d8bbwe\\bazel.exe",
     "cmake.configureOnOpen": false
 }

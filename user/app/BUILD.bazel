@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 mcu_library(
     name = "user_app",
     srcs = [
+        "app_error.c",
         "app_light.c",
         "app_version.c",
         "as5600.c",

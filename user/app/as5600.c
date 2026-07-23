@@ -1,4 +1,5 @@
 #include "as5600.h"
+#include "app/app_error.h"
 #include "app/hardware_iic.h"
 #include "stm32f1xx_hal.h"
 
@@ -142,6 +143,7 @@ uint16_t as5600GetRawAngle(void)
 
     if (read_result == 0U)
     {
+        AppError_Clear(APP_ERROR_AS5600_RUNTIME_READ);
         elapsed_cycles = DWT->CYCCNT - start_cycles;
         as5600_read_last_cycles = elapsed_cycles;
         as5600_read_total_cycles += elapsed_cycles;
@@ -160,6 +162,7 @@ uint16_t as5600GetRawAngle(void)
         return (angleData[0] & 0x0F) << 8 | angleData[1];
     }
 
+    AppError_Set(APP_ERROR_AS5600_RUNTIME_READ);
     return 0xFFFF;
 }
 
@@ -172,7 +175,8 @@ uint16_t as5600GetAngle(void)
     uint8_t angleData[2];
     
     // 一次性读取高低字节
-    if (as5600ReadMultipleReg(AS5600_ANGLE_H, angleData, 2) == 0) {
+    if (as5600ReadMultipleReg(AS5600_ANGLE_H, angleData, 2) == 0)
+    {
         // 组合高4位和低8位
         return (angleData[0] & 0x0F) << 8 | angleData[1];
     }
@@ -192,7 +196,11 @@ int32_t as5600GetAngleRadians(void)
 {
     rawAngle4095 = as5600GetRawAngle();
     
-    if (rawAngle4095 == 0xFFFF) return 0xFFFFFFFF; // 读取失败
+    if (rawAngle4095 == 0xFFFF)
+    {
+        return 0xFFFFFFFF; // 读取失败
+    }
+
     return rawAngle4095 * 15343/10000;
 }
 
@@ -203,7 +211,11 @@ int32_t as5600GetAngleRadians(void)
 float as5600GetAngleDegrees(void)
 {
     uint16_t rawAngle = as5600GetRawAngle();
-    if (rawAngle == 0xFFFF) return -1.0f; // 读取失败
+    if (rawAngle == 0xFFFF)
+    {
+        return -1.0f; // 读取失败
+    }
+
     return (rawAngle * 360.0f) / 4096.0f;
 }
 
@@ -216,7 +228,8 @@ uint8_t as5600GetStatus(as5600Status_t *status)
 {
     uint8_t statusReg = as5600ReadReg(AS5600_STATUS);
     
-    if (statusReg == 0xFF) {
+    if (statusReg == 0xFF)
+    {
         return 1; // 读取失败
     }
     
@@ -235,19 +248,31 @@ uint8_t as5600CheckMagnetStatus(void)
 {
     as5600Status_t status;
     
-    if (as5600GetStatus(&status)) {
+    if (as5600GetStatus(&status))
+    {
         return 0xFF; // 读取失败
     }
     
-    if (status.magnetDetected) {
-        if (status.magnetTooStrong) {
+    if (status.magnetDetected)
+    {
+        if (status.magnetTooStrong)
+        {
             return 1; // 磁铁太强
-        } else if (status.magnetTooWeak) {
-            return 2; // 磁铁太弱
-        } else {
-            return 0; // 磁铁正常
         }
-    } else {
+        else
+        {
+            if (status.magnetTooWeak)
+            {
+                return 2; // 磁铁太弱
+            }
+            else
+            {
+                return 0; // 磁铁正常
+            }
+        }
+    }
+    else
+    {
         return 3; // 磁铁未检测到
     }
 }
@@ -281,7 +306,8 @@ uint8_t as5600SetConfig(uint8_t configHigh, uint8_t configLow)
 
 /**
  * @brief 初始化AS5600
- * @return 0:成功, 1:设备无响应, 2:磁铁状态异常
+ * @return 0 初始化成功，1 表示通信或配置失败，2 表示未检测到磁铁或状态读取失败。
+ * @note 磁场过强或过弱只记录告警，不阻止初始化完成。
  */
 uint8_t as5600Init(void)
 {
@@ -289,15 +315,19 @@ uint8_t as5600Init(void)
     uint8_t device_status;
     uint8_t magnet_status;
 
+    AppError_Clear(APP_ERROR_AS5600_INIT_MASK |
+                   APP_ERROR_AS5600_RUNTIME_READ);
     as5600EnableCycleCounter();
     device_status = as5600ReadReg(AS5600_STATUS);
     if (device_status == 0xFF)
     {
+        AppError_Set(APP_ERROR_AS5600_STATUS_READ);
         return 1;
     }
 
     if (as5600ReadConfig(&config_data[0], &config_data[1]) != 0U)
     {
+        AppError_Set(APP_ERROR_AS5600_CONFIG_READ);
         return 1;
     }
 
@@ -307,28 +337,55 @@ uint8_t as5600Init(void)
 
     if (as5600SetConfig(config_data[0], config_data[1]) != 0U)
     {
+        AppError_Set(APP_ERROR_AS5600_CONFIG_WRITE);
         return 1;
     }
 
     if (as5600ReadConfig(&config_data[0], &config_data[1]) != 0U)
     {
+        AppError_Set(APP_ERROR_AS5600_CONFIG_READ);
         return 1;
     }
 
     as5600_active_config = ((uint16_t)config_data[0] << 8) | config_data[1];
     if (as5600_active_config != AS5600_CONF_TARGET)
     {
+        AppError_Set(APP_ERROR_AS5600_CONFIG_VERIFY);
         return 1;
     }
 
     magnet_status = as5600CheckMagnetStatus();
     if (magnet_status != 0U)
     {
-        return 2;
+        if (magnet_status == 1U)
+        {
+            AppError_Set(APP_ERROR_AS5600_MAGNET_TOO_STRONG);
+        }
+        else
+        {
+            if (magnet_status == 2U)
+            {
+                AppError_Set(APP_ERROR_AS5600_MAGNET_TOO_WEAK);
+            }
+            else
+            {
+                if (magnet_status == 3U)
+                {
+                    AppError_Set(APP_ERROR_AS5600_MAGNET_NOT_DETECTED);
+                }
+                else
+                {
+                    AppError_Set(APP_ERROR_AS5600_MAGNET_STATUS_READ);
+                }
+
+                return 2;
+            }
+        }
     }
 
     if (HardwareI2C_SetReadPointer(AS5600_ADDRESS, AS5600_RAW_ANGLE_H) != 0U)
     {
+        AppError_Set(APP_ERROR_AS5600_READ_POINTER);
         return 1;
     }
 
@@ -384,7 +441,8 @@ uint8_t as5600GetDeviceInfo(uint8_t *chipVersion)
 {
     // 读取芯片版本寄存器(0x01)
     uint8_t version = as5600ReadReg(0x01);
-    if (version == 0xFF) {
+    if (version == 0xFF)
+    {
         return 1;
     }
     
