@@ -128,6 +128,8 @@ MOTOR_ERROR_BITS = {
     12: "FOC 线程创建失败",
     13: "CAN 线程创建失败",
 }
+MOTOR_WARNING_ERROR_MASK = (1 << 5) | (1 << 6)
+MOTOR_ALERT_HISTORY_MAX = 200
 
 MOTOR_COMMAND_TEXT = {
     MOTOR_CMD_SET_RUN_MODE: "set_run_mode",
@@ -268,6 +270,17 @@ class MotorErrorEvent:
     active_bits: int
     latched_bits: int
     timestamp_ms: int
+
+
+@dataclass
+class MotorAlertRecord:
+    """@brief 上位机电机事件提醒记录。"""
+
+    created_at: str
+    severity: str
+    node_id: int
+    error_bits: int
+    description: str
 
 
 @dataclass
@@ -610,6 +623,18 @@ def motor_error_summary(active_bits: int, latched_bits: int) -> str:
         return "--"
 
     return f"0x{active_bits:08X}/0x{latched_bits:08X}"
+
+
+def motor_error_severity(error_bits: int) -> str:
+    """
+    @brief 根据错误位图判断事件严重等级。
+    @param error_bits 错误位图。
+    @return str 仅包含磁场强弱告警时返回“告警”，否则返回“故障”。
+    """
+    if (error_bits & ~MOTOR_WARNING_ERROR_MASK) != 0:
+        return "故障"
+
+    return "告警"
 
 
 def report_config_text(enabled: bool | None, period_ms: int | None) -> str:
@@ -1237,6 +1262,7 @@ class MotorToolApp:
         self.report_hz_var = tk.StringVar(value="500")
         self.chart_window_var = tk.StringVar(value=str(int(CHART_HISTORY_SECONDS)))
         self.status_var = tk.StringVar(value="未连接")
+        self.motor_alert_var = tk.StringVar(value="事件 0")
         self.new_uid_var = tk.StringVar(value="")
         self.new_node_var = tk.StringVar(value="0x04")
         self.new_pole_pairs_var = tk.StringVar(value="7")
@@ -1286,6 +1312,12 @@ class MotorToolApp:
         self.connected = False
         self.manage_reports: dict[int, ManageReportEvent] = {}
         self.motor_error_states: dict[int, tuple[int, int]] = {}
+        self.motor_alert_records: deque[MotorAlertRecord] = deque(
+            maxlen=MOTOR_ALERT_HISTORY_MAX
+        )
+        self.motor_alert_unread_count = 0
+        self.motor_alert_window: tk.Toplevel | None = None
+        self.motor_alert_tree: ttk.Treeview | None = None
         self.manage_listen_active = False
         self.pending_new_config: tuple[int, int, int, int] | None = None
         self.chart_history: dict[int, deque[tuple[int, int, int]]] = {}
@@ -1331,6 +1363,21 @@ class MotorToolApp:
         ttk.Label(top_frame, textvariable=self.status_var).grid(row=0,
                                                                 column=6,
                                                                 sticky="w")
+        self.motor_alert_button = tk.Button(
+            top_frame,
+            textvariable=self.motor_alert_var,
+            command=self._show_motor_alerts,
+            width=32,
+            anchor="w",
+            bg="#4b5563",
+            fg="#ffffff",
+            activebackground="#374151",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=8,
+            pady=4,
+        )
+        self.motor_alert_button.grid(row=0, column=7, padx=(12, 0), sticky="e")
 
         self.page_notebook = ttk.Notebook(self.root)
         self.page_notebook.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
@@ -2261,6 +2308,194 @@ class MotorToolApp:
         self.log_text.grid(row=0, column=0, sticky="ew")
         self.log_text.configure(state="disabled")
 
+    def _show_motor_alerts(self) -> None:
+        """
+        @brief 打开电机事件提醒窗口并将当前事件标记为已读。
+        @return None
+        """
+        if ((self.motor_alert_window is not None)
+            and self.motor_alert_window.winfo_exists()):
+            self.motor_alert_window.deiconify()
+            self.motor_alert_window.lift()
+            self.motor_alert_window.focus_force()
+            self._mark_motor_alerts_read()
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title("电机事件")
+        window.geometry("920x420")
+        window.minsize(720, 300)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(1, weight=1)
+        window.protocol("WM_DELETE_WINDOW", self._close_motor_alerts)
+        self.motor_alert_window = window
+
+        toolbar = ttk.Frame(window, padding=8)
+        toolbar.grid(row=0, column=0, sticky="ew")
+        toolbar.columnconfigure(0, weight=1)
+        ttk.Label(toolbar, text="最近 200 条电机事件").grid(row=0,
+                                                          column=0,
+                                                          sticky="w")
+        ttk.Button(toolbar,
+                   text="标记已读",
+                   command=self._mark_motor_alerts_read).grid(row=0,
+                                                               column=1,
+                                                               padx=(8, 0))
+        ttk.Button(toolbar,
+                   text="清除事件",
+                   command=self._clear_motor_alerts).grid(row=0,
+                                                           column=2,
+                                                           padx=(8, 0))
+
+        table_frame = ttk.Frame(window, padding=(8, 0, 8, 8))
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        columns = ("time", "severity", "node", "bits", "description")
+        tree = ttk.Treeview(table_frame,
+                            columns=columns,
+                            show="headings",
+                            height=14)
+        tree.heading("time", text="时间")
+        tree.heading("severity", text="级别")
+        tree.heading("node", text="节点")
+        tree.heading("bits", text="Code bits")
+        tree.heading("description", text="事件")
+        tree.column("time", width=150, anchor="center")
+        tree.column("severity", width=70, anchor="center")
+        tree.column("node", width=70, anchor="center")
+        tree.column("bits", width=120, anchor="center")
+        tree.column("description", width=470, anchor="w")
+        tree.tag_configure("故障", foreground="#b91c1c")
+        tree.tag_configure("告警", foreground="#b45309")
+        tree.tag_configure("恢复", foreground="#047857")
+        tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(table_frame,
+                                  orient="vertical",
+                                  command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scrollbar.set)
+        self.motor_alert_tree = tree
+        self._refresh_motor_alert_tree()
+        self._mark_motor_alerts_read()
+
+    def _close_motor_alerts(self) -> None:
+        """
+        @brief 关闭电机事件提醒窗口。
+        @return None
+        """
+        if ((self.motor_alert_window is not None)
+            and self.motor_alert_window.winfo_exists()):
+            self.motor_alert_window.destroy()
+
+        self.motor_alert_window = None
+        self.motor_alert_tree = None
+
+    def _refresh_motor_alert_tree(self) -> None:
+        """
+        @brief 刷新电机事件提醒列表。
+        @return None
+        """
+        if ((self.motor_alert_tree is None)
+            or (not self.motor_alert_tree.winfo_exists())):
+            return
+
+        for item_id in self.motor_alert_tree.get_children():
+            self.motor_alert_tree.delete(item_id)
+
+        for record in reversed(self.motor_alert_records):
+            self.motor_alert_tree.insert(
+                "",
+                "end",
+                values=(record.created_at,
+                        record.severity,
+                        f"0x{record.node_id:02X}",
+                        f"0x{record.error_bits:08X}",
+                        record.description),
+                tags=(record.severity,),
+            )
+
+    def _mark_motor_alerts_read(self) -> None:
+        """
+        @brief 将全部电机事件提醒标记为已读。
+        @return None
+        """
+        self.motor_alert_unread_count = 0
+        self._refresh_motor_alert_indicator()
+
+    def _clear_motor_alerts(self) -> None:
+        """
+        @brief 清除上位机保存的电机事件提醒记录。
+        @return None
+        @note 清除提醒不会清除电机固件中的当前或锁存错误位。
+        """
+        self.motor_alert_records.clear()
+        self.motor_alert_unread_count = 0
+        self._refresh_motor_alert_tree()
+        self._refresh_motor_alert_indicator()
+
+    def _refresh_motor_alert_indicator(self) -> None:
+        """
+        @brief 刷新顶部事件提醒入口的文本和颜色。
+        @return None
+        """
+        if len(self.motor_alert_records) == 0:
+            self.motor_alert_var.set("事件 0")
+            self.motor_alert_button.configure(bg="#4b5563",
+                                              activebackground="#374151")
+            return
+
+        latest = self.motor_alert_records[-1]
+        unread_text = f"未读 {self.motor_alert_unread_count}" \
+            if self.motor_alert_unread_count > 0 else "已读"
+        description = latest.description
+        if len(description) > 24:
+            description = f"{description[:24]}..."
+
+        self.motor_alert_var.set(
+            f"事件 {unread_text} [{latest.severity}] "
+            f"0x{latest.node_id:02X} {description}"
+        )
+        color = {
+            "故障": "#b91c1c",
+            "告警": "#b45309",
+            "恢复": "#047857",
+        }.get(latest.severity, "#4b5563")
+        self.motor_alert_button.configure(bg=color, activebackground=color)
+
+    def _record_motor_alert(self,
+                            node_id: int,
+                            severity: str,
+                            error_bits: int,
+                            description: str) -> None:
+        """
+        @brief 新增一条去重后的电机事件提醒。
+        @param node_id 事件所属节点 ID。
+        @param severity 事件级别。
+        @param error_bits 事件对应的错误位图。
+        @param description 事件说明。
+        @return None
+        """
+        record = MotorAlertRecord(created_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                                  severity=severity,
+                                  node_id=node_id,
+                                  error_bits=error_bits,
+                                  description=description)
+        self.motor_alert_records.append(record)
+        alert_window_open = ((self.motor_alert_window is not None)
+                             and self.motor_alert_window.winfo_exists())
+        if not alert_window_open:
+            self.motor_alert_unread_count = min(
+                self.motor_alert_unread_count + 1,
+                MOTOR_ALERT_HISTORY_MAX,
+            )
+
+        self._refresh_motor_alert_tree()
+        self._refresh_motor_alert_indicator()
+
+        if severity in ("故障", "告警"):
+            self.root.bell()
+
     def _toggle_connection(self) -> None:
         """
         @brief 切换 PCAN 连接状态。
@@ -2363,7 +2598,6 @@ class MotorToolApp:
             return
 
         self.motor_states.clear()
-        self.motor_error_states.clear()
         self.chart_history.clear()
 
         for item_id in self.motor_table.get_children():
@@ -3185,6 +3419,8 @@ class MotorToolApp:
         @return None
         """
         previous = self.motor_error_states.get(event.node_id)
+        previous_active = previous[0] if previous is not None else 0
+        previous_latched = previous[1] if previous is not None else 0
         current = (event.active_bits, event.latched_bits)
         self.motor_error_states[event.node_id] = current
 
@@ -3195,6 +3431,39 @@ class MotorToolApp:
 
         if previous == current:
             return
+
+        new_active_bits = event.active_bits & ~previous_active
+        new_latched_bits = event.latched_bits & ~previous_latched \
+            & ~new_active_bits
+        recovered_bits = previous_active & ~event.active_bits
+
+        if (new_active_bits | new_latched_bits) != 0:
+            description_parts = []
+            if new_active_bits != 0:
+                description_parts.append(
+                    f"当前发生: {motor_error_bits_text(new_active_bits)}"
+                )
+
+            if new_latched_bits != 0:
+                description_parts.append(
+                    f"历史记录: {motor_error_bits_text(new_latched_bits)}"
+                )
+
+            new_error_bits = new_active_bits | new_latched_bits
+            self._record_motor_alert(
+                event.node_id,
+                motor_error_severity(new_error_bits),
+                new_error_bits,
+                "; ".join(description_parts),
+            )
+
+        if recovered_bits != 0:
+            self._record_motor_alert(
+                event.node_id,
+                "恢复",
+                recovered_bits,
+                f"已恢复: {motor_error_bits_text(recovered_bits)}",
+            )
 
         self._append_log(
             f"rx node=0x{event.node_id:02X} error "
